@@ -3,16 +3,19 @@
 import dynamic from "next/dynamic";
 import { Ban, Download, GitBranch, RotateCcw, Type } from "lucide-react";
 import type { ForwardRefExoticComponent, RefAttributes } from "react";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  ActiveTool,
-  MapEditorHandle,
-  MapEditorProps,
-  MapStyleMode,
-} from "@/components/MapEditor";
+import React, { useCallback, useRef, useState } from "react";
+import type { ActiveTool, MapEditorHandle, MapEditorProps } from "@/components/MapEditor";
+
+/** forwardRef + next/dynamic: eksplisitt modulform som TS og IDE forstår. */
+type MapEditorWithRef = ForwardRefExoticComponent<
+  MapEditorProps & RefAttributes<MapEditorHandle>
+>;
 
 const MapEditor = dynamic(
-  () => import("@/components/MapEditor"),
+  () =>
+    import("@/components/MapEditor") as unknown as Promise<{
+      default: MapEditorWithRef;
+    }>,
   {
     ssr: false,
     loading: () => (
@@ -21,12 +24,61 @@ const MapEditor = dynamic(
       </div>
     ),
   }
-) as ForwardRefExoticComponent<
-  MapEditorProps & RefAttributes<MapEditorHandle>
->;
+) as MapEditorWithRef;
 
 const toolButtonBase =
   "w-full rounded-xl px-4 py-4 md:py-3 text-left text-sm font-semibold border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95";
+
+type SidebarAnnotation = { id: string; text: string; size: number };
+
+function AnnotationEditPanel({
+  annotation,
+  onCommitText,
+  onChangeSize,
+  onDelete,
+}: {
+  annotation: SidebarAnnotation;
+  onCommitText: (text: string) => void;
+  onChangeSize: (size: number) => void;
+  onDelete: () => void;
+}) {
+  const [localText, setLocalText] = useState(annotation.text);
+  const [localSize, setLocalSize] = useState(annotation.size);
+
+  return (
+    <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+      <label className="text-[10px] font-bold text-slate-500 block mb-2 uppercase">
+        Rediger tekst
+      </label>
+      <input
+        type="text"
+        value={localText}
+        onChange={(e) => setLocalText(e.target.value)}
+        onBlur={() => onCommitText(localText)}
+        className="w-full p-2 border rounded-lg mb-3 text-sm focus:ring-2 ring-slate-200 outline-none"
+      />
+      <input
+        type="range"
+        min={10}
+        max={40}
+        value={localSize}
+        onChange={(e) => {
+          const val = Number(e.target.value);
+          setLocalSize(val);
+          onChangeSize(val);
+        }}
+        className="w-full mb-3"
+      />
+      <button
+        type="button"
+        onClick={onDelete}
+        className="w-full py-2 text-xs font-bold text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+      >
+        Slett tekst
+      </button>
+    </div>
+  );
+}
 
 export default function LagKartPage() {
   const mapRef = useRef<MapEditorHandle | null>(null);
@@ -34,28 +86,16 @@ export default function LagKartPage() {
   const [onClear, setOnClear] = useState(0);
   const [onUndo, setOnUndo] = useState(0);
   const [onDeleteEditingAnnotation, setOnDeleteEditingAnnotation] = useState(0);
-  const [activeStyle, setActiveStyle] = useState<MapStyleMode>("light");
+  const [activeStyle, setActiveStyle] = useState<string>("light");
 
   const [editingAnnotation, setEditingAnnotation] = useState<{
     id: string;
     text: string;
     size: number;
   } | null>(null);
-  const [localText, setLocalText] = useState("");
-  const [localSize, setLocalSize] = useState(16);
-
-  useEffect(() => {
-    if (!editingAnnotation) {
-      setLocalText("");
-      setLocalSize(16);
-      return;
-    }
-    setLocalText(editingAnnotation.text);
-    setLocalSize(editingAnnotation.size);
-  }, [editingAnnotation?.id]);
-
   const handleEditingAnnotationChange = useCallback(
-    (annotation: { id: string; text: string; size: number } | null) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matcher MapEditorProps
+    (annotation: any) => {
       setEditingAnnotation(annotation);
     },
     []
@@ -76,14 +116,14 @@ export default function LagKartPage() {
             <div className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">
               KARTTYPE
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
               <button
                 type="button"
                 onClick={() => setActiveStyle("light")}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg border ${
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
                   activeStyle === "light"
-                    ? "bg-slate-800 text-white"
-                    : "bg-white text-slate-600"
+                    ? "bg-white shadow-sm text-slate-900"
+                    : "text-slate-500 hover:text-slate-700"
                 }`}
               >
                 Gråtone
@@ -91,13 +131,13 @@ export default function LagKartPage() {
               <button
                 type="button"
                 onClick={() => setActiveStyle("streets")}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg border ${
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
                   activeStyle === "streets"
-                    ? "bg-slate-800 text-white"
-                    : "bg-white text-slate-600"
+                    ? "bg-white shadow-sm text-slate-900"
+                    : "text-slate-500 hover:text-slate-700"
                 }`}
               >
-                Farge
+                Fargekart
               </button>
             </div>
 
@@ -147,46 +187,24 @@ export default function LagKartPage() {
             </div>
 
             {editingAnnotation && (
-              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 animate-in fade-in slide-in-from-bottom-2">
-                <label className="text-[10px] font-bold text-slate-500 block mb-2 uppercase">
-                  Rediger tekst
-                </label>
-                <input
-                  type="text"
-                  value={localText}
-                  onChange={(e) => setLocalText(e.target.value)}
-                  onBlur={() =>
-                    setEditingAnnotation((prev) =>
-                      prev ? { ...prev, text: localText } : null
-                    )
-                  }
-                  className="w-full p-2 border rounded-lg mb-3 text-sm focus:ring-2 ring-slate-200 outline-none"
-                />
-                <input
-                  type="range"
-                  min={10}
-                  max={40}
-                  value={localSize}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setLocalSize(val);
-                    setEditingAnnotation((prev) =>
-                      prev ? { ...prev, size: val } : null
-                    );
-                  }}
-                  className="w-full mb-3"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOnDeleteEditingAnnotation((p) => p + 1);
-                    setEditingAnnotation(null);
-                  }}
-                  className="w-full py-2 text-xs font-bold text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  Slett tekst
-                </button>
-              </div>
+              <AnnotationEditPanel
+                key={editingAnnotation.id}
+                annotation={editingAnnotation}
+                onCommitText={(text) =>
+                  setEditingAnnotation((prev) =>
+                    prev ? { ...prev, text } : null
+                  )
+                }
+                onChangeSize={(size) =>
+                  setEditingAnnotation((prev) =>
+                    prev ? { ...prev, size } : null
+                  )
+                }
+                onDelete={() => {
+                  setOnDeleteEditingAnnotation((p) => p + 1);
+                  setEditingAnnotation(null);
+                }}
+              />
             )}
           </div>
 

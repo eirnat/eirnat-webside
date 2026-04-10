@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowLeft,
   ChevronDown,
@@ -168,15 +168,8 @@ export default function SpillsystemerPage() {
   );
   const [petanqueMsg, setPetanqueMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    const n = Math.min(
-      PETANQUE_MAX_OMGANGER,
-      Math.max(1, Math.floor(petanqueAntallOmganger) || 1)
-    );
-    if (n !== petanqueAntallOmganger) {
-      setPetanqueAntallOmganger(n);
-      return;
-    }
+  function handlePetanqueAntallOmgangerChange(n: number) {
+    setPetanqueAntallOmganger(n);
     setPetanqueScores((prev) => {
       if (prev.length === n) return prev;
       if (n > prev.length) {
@@ -187,7 +180,7 @@ export default function SpillsystemerPage() {
       }
       return prev.slice(0, n);
     });
-  }, [petanqueAntallOmganger]);
+  }
 
   const petanqueTotals = useMemo(() => {
     const t: [number, number, number] = [0, 0, 0];
@@ -409,7 +402,7 @@ export default function SpillsystemerPage() {
                       name="antall_omganger"
                       value={petanqueAntallOmganger}
                       onChange={(e) =>
-                        setPetanqueAntallOmganger(Number(e.target.value))
+                        handlePetanqueAntallOmgangerChange(Number(e.target.value))
                       }
                       className={`${inputClass} appearance-none bg-[length:1rem] bg-[right_1rem_center] bg-no-repeat pr-10`}
                       style={selectChevronStyle}

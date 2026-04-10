@@ -36,8 +36,9 @@ export async function GET(request: Request) {
     // Vi må sørge for at vi sender tilbake ekte GeoJSON til kartet.
     return NextResponse.json(data);
 
-  } catch (error: any) {
-    console.error("Kritisk feil i V4-rute:", error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Kritisk feil i V4-rute:", message);
     return NextResponse.json({ error: 'Klarte ikke hente data fra NVDB V4' }, { status: 500 });
   }
 }
