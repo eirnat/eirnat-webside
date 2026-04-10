@@ -38,7 +38,7 @@ export default function LagKartPage() {
       <div className="flex flex-col md:flex-row h-screen overflow-hidden">
         <aside className="order-last md:order-first w-full md:max-w-xs bg-white md:border-r border-slate-200 p-4 md:p-6 flex flex-col gap-4 overflow-y-auto z-10">
           <div>
-            <h1 className="text-xl font-bold tracking-tight">Lag kart</h1>
+            <h1 className="text-xl font-bold tracking-tight">Lag kart - VERSJON 100</h1>
             <p className="mt-2 text-sm text-slate-600">Velg verktøy og klikk på vegnettet.</p>
           </div>
 
