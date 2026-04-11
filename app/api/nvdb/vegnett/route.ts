@@ -5,44 +5,39 @@ export async function GET(request: Request) {
   const bbox = searchParams.get('bbox');
 
   if (!bbox) {
-    return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });
+    return NextResponse.json({ error: 'Mangler bbox' }, { status: 400 });
   }
 
-  // NVDB API v3 krever koordinater i formatet: vest,sør,øst,nord
-  // Vi legger også til srid=4326 for å fortelle at vi bruker GPS-koordinater (WGS84)
-  const nvdbUrl = `https://nvdbapiles-v3.atlas.vegvesen.no/vegnett/veglenkesekvenser/segmenter?kartutsnitt=${bbox}&srid=4326`;
+  // NY URL FOR V4: Vi fjerner "-v3" og bruker det nye endepunktet
+  // Legg merke til at parameteren nå heter "kartutsnitt" og vi legger til "srid=4326"
+  const url = `https://nvdbapiles.atlas.vegvesen.no/vegnett/veglenkesekvenser/segmentert?kartutsnitt=${bbox}&srid=4326`;
 
   try {
-    const response = await fetch(nvdbUrl, {
+    console.log("Henter fra NVDB V4:", url);
+
+    const response = await fetch(url, {
+      method: 'GET',
       headers: {
-        'Accept': 'application/vnd.vegvesen.nvdb-v3-rev1+json',
-        'X-Client': 'Eirnat Kartverktøy', // Identifiserer deg for Vegvesenet
+        // Det er viktig at X-Client er unik. La oss kalle den noe litt mer formelt.
+        'X-Client': 'eirnat-kartverktøy-v4',
+        'Accept': 'application/vnd.vegvesen.nvdb-v4+json', // Vi ber om V4-format
       },
     });
 
     if (!response.ok) {
-      throw new Error(`NVDB svarte med status: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`NVDB V4 feilkode ${response.status}:`, errorText);
+      return NextResponse.json({ error: `NVDB svarte med ${response.status}` }, { status: response.status });
     }
 
     const data = await response.json();
+    
+    // V4 returnerer data i et litt annet format enn V3. 
+    // Vi må sørge for at vi sender tilbake ekte GeoJSON til kartet.
+    return NextResponse.json(data);
 
-    // Vi må pakke om NVDB-dataene til GeoJSON-format som kartet forstår
-    const geojson = {
-      type: 'FeatureCollection',
-      features: data.objekter.map((obj: any) => ({
-        type: 'Feature',
-        geometry: obj.geometri,
-        properties: {
-          id: obj.veglenkesekvensid,
-          type: obj.vegsystemreferanse?.vegsystem?.vegkategori,
-          nummer: obj.vegsystemreferanse?.vegsystem?.nummer,
-        },
-      })),
-    };
-
-    return NextResponse.json(geojson);
-  } catch (error) {
-    console.error('NVDB Proxy Error:', error);
-    return NextResponse.json({ error: 'Klarte ikke hente data fra NVDB' }, { status: 500 });
+  } catch (error: any) {
+    console.error("Kritisk feil i V4-rute:", error.message);
+    return NextResponse.json({ error: 'Klarte ikke hente data fra NVDB V4' }, { status: 500 });
   }
 }
