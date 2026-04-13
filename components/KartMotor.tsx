@@ -7,7 +7,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 const SVV_COLORS = {
   closedRoad: "#E60000", // SVV Rød
   closedRoadOutline: "#990000", // Mork rod casing
-  detour: "#008b4a",     // SVV Grønn
+  detour: "#00B359",     // SVV Grønn
   detourOutline: "#005c31", // Mork gronn casing
   background: "#F5F5F5"
 };
@@ -21,6 +21,7 @@ type KartMotorProps = {
   onUndo: number;
   editingAnnotation: { id: string; text: string; size: number; rotation: number; coordinates: Position } | null;
   onEditingAnnotationChange: (annotation: { id: string; text: string; size: number; rotation: number; coordinates: Position } | null) => void;
+  showLegend: boolean;
 };
 
   export type KartMotorHandle = {
@@ -147,7 +148,7 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
 };
 
 const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function KartMotor(
-  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange },
+  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange, showLegend },
   ref
 ) {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -173,6 +174,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const editingAnnotationIdRef = useRef<string | null>(null);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
+  const mapStyleRef = useRef(mapStyle);
 
   const lastAppliedMapStyleRef = useRef<'dataviz' | 'streets' | null>(null);
   const styleLoadGenerationRef = useRef(0);
@@ -180,6 +182,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   useEffect(() => {
     activeToolRef.current = activeTool;
   }, [activeTool]);
+
+  useEffect(() => {
+    mapStyleRef.current = mapStyle;
+  }, [mapStyle]);
 
   useEffect(() => {
     editingAnnotationIdRef.current = editingAnnotationId;
@@ -315,6 +321,111 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     updateSourceData('annotations-source', {
       type: 'FeatureCollection',
       features: annotationFeatures
+    });
+  };
+
+  const applyCustomStyle = (mapInstance: maplibregl.Map) => {
+    const ownLayerIds = new Set([
+      'annotations-layer',
+      'closed-sign-layer',
+      'detour-road-layer',
+      'detour-road-casing-layer',
+      'closed-road-fill',
+      'closed-road-outline',
+      'nvdb-hover-layer',
+      'nvdb-hitbox',
+      'nvdb-layer'
+    ]);
+    const layers = mapInstance.getStyle().layers ?? [];
+    const activeStyle = mapStyleRef.current;
+
+    layers.forEach((layer) => {
+      if (ownLayerIds.has(layer.id)) return;
+      const id = layer.id.toLowerCase();
+
+      if (activeStyle === 'dataviz') {
+        const keepRoadInfo =
+          id.includes('road_label') ||
+          id.includes('highway_label') ||
+          id.includes('shield');
+        const shouldHide =
+          id.includes('label') ||
+          id.includes('place') ||
+          id.includes('poi') ||
+          id.includes('transit');
+
+        if (shouldHide && !keepRoadInfo) {
+          try {
+            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
+          } catch {
+            // ignorer lag uten visibility-layout
+          }
+        } else if (keepRoadInfo) {
+          try {
+            mapInstance.setLayoutProperty(layer.id, 'visibility', 'visible');
+          } catch {
+            // ignorer lag uten visibility-layout
+          }
+        }
+
+        const isRoadGeometry =
+          layer.type === 'line' &&
+          'source-layer' in layer &&
+          layer['source-layer'] === 'transportation';
+        if (!isRoadGeometry) return;
+
+        if (id.includes('casing')) {
+          try {
+            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
+          } catch {
+            // ignorer lag uten visibility-layout
+          }
+          return;
+        }
+
+        try {
+          mapInstance.setPaintProperty(layer.id, 'line-color', [
+            'match',
+            ['get', 'class'],
+            'motorway',
+            '#faec93',
+            'trunk',
+            '#faec93',
+            'primary',
+            '#faec93',
+            '#d1d1d1'
+          ]);
+        } catch {
+          // ignorer lag uten kompatibel line-color
+        }
+      } else {
+        const isRoadOrPlaceLabel =
+          id.includes('road_label') || id.includes('place_label');
+        if (isRoadOrPlaceLabel) {
+          try {
+            mapInstance.setLayoutProperty(layer.id, 'visibility', 'visible');
+          } catch {
+            // ignorer lag uten visibility-layout
+          }
+          return;
+        }
+
+        const hasNoiseKeyword =
+          id.includes('poi') ||
+          id.includes('shop') ||
+          id.includes('food') ||
+          id.includes('restaurant') ||
+          id.includes('amenity') ||
+          id.includes('transit');
+        const isRailLayer = id.includes('rail');
+        if (hasNoiseKeyword && !isRailLayer) {
+          try {
+            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
+          } catch {
+            // ignorer lag uten visibility-layout
+          }
+        }
+      }
     });
   };
 
@@ -736,6 +847,59 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
             ctx.drawImage(canvas, 0, 0);
 
+            if (showLegend) {
+              const dpr = window.devicePixelRatio || 1;
+              const boxX = 16 * dpr;
+              const boxY = exportCanvas.height - 120 * dpr;
+              const boxW = 210 * dpr;
+              const boxH = 96 * dpr;
+
+              ctx.save();
+              ctx.fillStyle = '#ffffff';
+              ctx.strokeStyle = '#d1d5db';
+              ctx.lineWidth = 1 * dpr;
+              ctx.beginPath();
+              ctx.rect(boxX, boxY, boxW, boxH);
+              ctx.fill();
+              ctx.stroke();
+
+              const drawLegendLine = (
+                y: number,
+                casingColor: string,
+                mainColor: string
+              ) => {
+                const startX = boxX + 16 * dpr;
+                const endX = boxX + 86 * dpr;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = casingColor;
+                ctx.lineWidth = 8 * dpr;
+                ctx.beginPath();
+                ctx.moveTo(startX, y);
+                ctx.lineTo(endX, y);
+                ctx.stroke();
+
+                ctx.strokeStyle = mainColor;
+                ctx.lineWidth = 5 * dpr;
+                ctx.beginPath();
+                ctx.moveTo(startX, y);
+                ctx.lineTo(endX, y);
+                ctx.stroke();
+              };
+
+              const row1Y = boxY + 34 * dpr;
+              const row2Y = boxY + 66 * dpr;
+              drawLegendLine(row1Y, SVV_COLORS.closedRoadOutline, SVV_COLORS.closedRoad);
+              drawLegendLine(row2Y, SVV_COLORS.detourOutline, SVV_COLORS.detour);
+
+              ctx.fillStyle = '#111827';
+              ctx.font = `${12 * dpr}px "LFT Etica", Arial, sans-serif`;
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'middle';
+              ctx.fillText('Stengt veg', boxX + 98 * dpr, row1Y);
+              ctx.fillText('Alternativ rute', boxX + 98 * dpr, row2Y);
+              ctx.restore();
+            }
+
             const dataUrl = exportCanvas.toDataURL('image/png');
             const link = document.createElement('a');
             link.href = dataUrl;
@@ -788,6 +952,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     };
 
     map.current = new maplibregl.Map(mapOptions);
+    map.current.on('style.load', () => {
+      if (!map.current) return;
+      applyCustomStyle(map.current);
+    });
 
     const geocodingControl = new GeocodingControl({
       apiKey: 'b9LxmFq6z6OEgzPzvrzA',
@@ -1159,6 +1327,39 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   return (
     <div className="relative h-full w-full">
       <div ref={mapContainer} className="h-full w-full" />
+      {showLegend && (
+        <div
+          className="absolute bottom-10 left-4 rounded-md bg-white p-3 shadow-lg"
+          style={{ fontFamily: 'LFT Etica, Arial, sans-serif' }}
+        >
+          <div className="flex items-center gap-2 text-xs text-slate-800">
+            <div className="relative h-2.5 w-16">
+              <span
+                className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
+                style={{ backgroundColor: SVV_COLORS.closedRoadOutline }}
+              />
+              <span
+                className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full"
+                style={{ backgroundColor: SVV_COLORS.closedRoad }}
+              />
+            </div>
+            <span>Stengt veg</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2 text-xs text-slate-800">
+            <div className="relative h-2.5 w-16">
+              <span
+                className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
+                style={{ backgroundColor: SVV_COLORS.detourOutline }}
+              />
+              <span
+                className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full"
+                style={{ backgroundColor: SVV_COLORS.detour }}
+              />
+            </div>
+            <span>Alternativ rute</span>
+          </div>
+        </div>
+      )}
       {showZoomHint && (
         <div className="pointer-events-none absolute bottom-4 left-4 rounded-md bg-black/70 px-3 py-2 text-sm text-white">
           Zoom inn for å se vegnett
