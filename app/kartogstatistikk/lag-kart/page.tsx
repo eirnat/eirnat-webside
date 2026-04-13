@@ -38,6 +38,7 @@ export default function LagKartPage() {
     size: number;
     rotation: number;
     coordinates: [number, number];
+    hasBackground: boolean;
   } | null>(null);
   const [mapStyle, setMapStyle] = useState<"dataviz" | "streets">("dataviz");
 
@@ -46,7 +47,7 @@ export default function LagKartPage() {
   }, []);
 
   const handleEditingAnnotationChange = useCallback(
-    (annotation: { id: string; text: string; size: number; rotation: number; coordinates: [number, number] } | null) => {
+    (annotation: { id: string; text: string; size: number; rotation: number; coordinates: [number, number]; hasBackground: boolean } | null) => {
       setEditingAnnotation((prev) => {
         if (!annotation) return null;
         if (
@@ -56,7 +57,8 @@ export default function LagKartPage() {
           prev.size === annotation.size &&
           prev.rotation === annotation.rotation &&
           prev.coordinates[0] === annotation.coordinates[0] &&
-          prev.coordinates[1] === annotation.coordinates[1]
+          prev.coordinates[1] === annotation.coordinates[1] &&
+          prev.hasBackground === annotation.hasBackground
         ) {
           return prev;
         }
@@ -65,6 +67,10 @@ export default function LagKartPage() {
     },
     []
   );
+
+  const handleTextAnnotationCreated = useCallback(() => {
+    setActiveTool("none");
+  }, []);
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
@@ -475,6 +481,7 @@ export default function LagKartPage() {
             editingAnnotation={editingAnnotation}
             onEditingAnnotationChange={handleEditingAnnotationChange}
             showLegend={showLegend}
+            onTextAnnotationCreated={handleTextAnnotationCreated}
           />
         </section>
       </div>
