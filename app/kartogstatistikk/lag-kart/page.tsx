@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Download, GitBranch, RotateCcw, Slash, Type } from "lucide-react";
+import { Download, GitBranch, List, RotateCcw, Slash, Type } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ActiveTool, type KartMotorHandle } from "@/components/KartMotor";
 
@@ -31,6 +31,7 @@ export default function LagKartPage() {
   const [activeTool, setActiveTool] = useState<ActiveTool>("none");
   const [onClear, setOnClear] = useState(0);
   const [onUndo, setOnUndo] = useState(0);
+  const [showLegend, setShowLegend] = useState(true);
   const [editingAnnotation, setEditingAnnotation] = useState<{
     id: string;
     text: string;
@@ -205,6 +206,14 @@ export default function LagKartPage() {
                     </svg>
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowLegend((prev) => !prev)}
+                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100"
+                >
+                  <List className="h-4 w-4 shrink-0" />
+                  Vis tegnforklaring
+                </button>
               </div>
             </div>
 
@@ -386,6 +395,14 @@ export default function LagKartPage() {
                 />
                 Legg til tekst
               </button>
+              <button
+                type="button"
+                onClick={() => setShowLegend((prev) => !prev)}
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100"
+              >
+                <List className="h-4 w-4 shrink-0" />
+                Vis tegnforklaring
+              </button>
             </div>
 
             <div>
@@ -457,6 +474,7 @@ export default function LagKartPage() {
             onUndo={onUndo}
             editingAnnotation={editingAnnotation}
             onEditingAnnotationChange={handleEditingAnnotationChange}
+            showLegend={showLegend}
           />
         </section>
       </div>
