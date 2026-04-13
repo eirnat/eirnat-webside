@@ -280,11 +280,37 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     for (const annotation of nextAnnotations) {
       if (markerMap[annotation.id]) continue;
+      let dragOccurred = false;
       const box = document.createElement('div');
+      const wrapTextLines = (text: string, maxCharsPerLine = 30): string[] => {
+        const paragraphs = text.split('\n');
+        const wrapped: string[] = [];
+        for (const paragraph of paragraphs) {
+          const words = paragraph.trim().length > 0 ? paragraph.trim().split(/\s+/) : [''];
+          let currentLine = '';
+          for (const word of words) {
+            if (!currentLine) {
+              currentLine = word;
+              continue;
+            }
+            const candidate = `${currentLine} ${word}`;
+            if (candidate.length <= maxCharsPerLine) {
+              currentLine = candidate;
+            } else {
+              wrapped.push(currentLine);
+              currentLine = word;
+            }
+          }
+          wrapped.push(currentLine);
+        }
+        return wrapped.length > 0 ? wrapped : [''];
+      };
+      const wrappedLines = wrapTextLines(annotation.text, 30);
       box.style.display = 'flex';
       box.style.alignItems = 'center';
       box.style.justifyContent = 'center';
-      box.style.whiteSpace = 'nowrap';
+      box.style.whiteSpace = 'pre-wrap';
+      box.style.maxWidth = `${Math.max(250, annotation.size * 15)}px`;
       box.style.textAlign = 'center';
       box.style.lineHeight = '1';
       box.style.background = 'transparent';
@@ -297,6 +323,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       box.style.width = 'fit-content';
       box.style.height = 'fit-content';
       box.style.zIndex = '100';
+      box.textContent = wrappedLines.join('\n');
 
       const marker = new maplibregl.Marker({
         element: box,
@@ -307,13 +334,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         .addTo(map.current);
 
       box.addEventListener('click', (event) => {
+        if (dragOccurred) return;
         if (map.current?.isEasing()) return;
         event.stopPropagation();
         skipNextMapClickRef.current = true;
-        setEditingAnnotationId((prev) => (prev === annotation.id ? prev : annotation.id));
+        setEditingAnnotationId(null);
+        window.setTimeout(() => {
+          setEditingAnnotationId(annotation.id);
+        }, 0);
       });
 
       marker.on('dragstart', () => {
+        dragOccurred = true;
         map.current?.dragPan.disable();
         draggingAnnotationIdRef.current = annotation.id;
         setEditingAnnotationId((prev) => (prev === annotation.id ? prev : annotation.id));
@@ -343,6 +375,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         if (map.current) {
           map.current.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
         }
+        window.setTimeout(() => {
+          dragOccurred = false;
+        }, 200);
       });
 
       markerMap[annotation.id] = marker;
@@ -350,14 +385,40 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const updateAnnotationMarkers = (nextAnnotations: Annotation[]) => {
+    const wrapTextLines = (text: string, maxCharsPerLine = 30): string[] => {
+      const paragraphs = text.split('\n');
+      const wrapped: string[] = [];
+      for (const paragraph of paragraphs) {
+        const words = paragraph.trim().length > 0 ? paragraph.trim().split(/\s+/) : [''];
+        let currentLine = '';
+        for (const word of words) {
+          if (!currentLine) {
+            currentLine = word;
+            continue;
+          }
+          const candidate = `${currentLine} ${word}`;
+          if (candidate.length <= maxCharsPerLine) {
+            currentLine = candidate;
+          } else {
+            wrapped.push(currentLine);
+            currentLine = word;
+          }
+        }
+        wrapped.push(currentLine);
+      }
+      return wrapped.length > 0 ? wrapped : [''];
+    };
+
     for (const annotation of nextAnnotations) {
       const marker = markersRef.current[annotation.id];
       if (!marker) continue;
       const box = marker.getElement();
-      box.textContent = annotation.text;
+      box.textContent = wrapTextLines(annotation.text, 30).join('\n');
       box.style.fontSize = `${annotation.size}px`;
       box.style.fontFamily = 'Arial, sans-serif';
-      box.style.fontWeight = 'bold';
+      box.style.fontWeight = annotation.hasBackground ? 'normal' : 'bold';
+      box.style.whiteSpace = 'pre-wrap';
+      box.style.maxWidth = `${Math.max(250, annotation.size * 15)}px`;
       box.style.transform = `rotate(${annotation.rotation}deg)`;
       box.style.transformOrigin = 'center center';
       if (annotation.hasBackground) {
@@ -1024,6 +1085,29 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
             const dpr = window.devicePixelRatio || 1;
             const annotations = annotationsRef.current;
+            const wrapTextLines = (text: string, maxCharsPerLine = 30): string[] => {
+              const paragraphs = text.split('\n');
+              const wrapped: string[] = [];
+              for (const paragraph of paragraphs) {
+                const words = paragraph.trim().length > 0 ? paragraph.trim().split(/\s+/) : [''];
+                let currentLine = '';
+                for (const word of words) {
+                  if (!currentLine) {
+                    currentLine = word;
+                    continue;
+                  }
+                  const candidate = `${currentLine} ${word}`;
+                  if (candidate.length <= maxCharsPerLine) {
+                    currentLine = candidate;
+                  } else {
+                    wrapped.push(currentLine);
+                    currentLine = word;
+                  }
+                }
+                wrapped.push(currentLine);
+              }
+              return wrapped.length > 0 ? wrapped : [''];
+            };
             if (annotations.length > 0 && 'fonts' in document) {
               await document.fonts.ready;
             }
@@ -1032,17 +1116,22 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               const x = projected.x * dpr;
               const y = projected.y * dpr;
               const fontSize = Math.max(10, annotation.size) * dpr;
+              const fontWeight = annotation.hasBackground ? 'normal' : 'bold';
+              const wrappedLines = wrapTextLines(annotation.text, 30);
 
               ctx.save();
               ctx.translate(x, y);
               ctx.rotate((annotation.rotation * Math.PI) / 180);
-              ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+              ctx.font = `${fontWeight} ${fontSize}px Arial, sans-serif`;
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
 
-              const metrics = ctx.measureText(annotation.text);
-              const textWidth = metrics.width;
-              const textHeight = fontSize;
+              const lineHeight = fontSize * 1.2;
+              const textWidth = wrappedLines.reduce((max, line) => {
+                const lineWidth = ctx.measureText(line).width;
+                return Math.max(max, lineWidth);
+              }, 0);
+              const textHeight = wrappedLines.length * lineHeight;
               if (annotation.hasBackground) {
                 const padX = 10 * dpr;
                 const padY = 5 * dpr;
@@ -1072,7 +1161,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillStyle = '#111827';
-              ctx.fillText(annotation.text, 0, 0);
+              const startY = -textHeight / 2 + lineHeight / 2;
+              for (let i = 0; i < wrappedLines.length; i += 1) {
+                const lineY = startY + i * lineHeight;
+                ctx.fillText(wrappedLines[i], 0, lineY);
+              }
               ctx.restore();
             }
 
@@ -1186,7 +1279,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     const geocodingControl = new GeocodingControl({
-      apiKey: 'b9LxmFq6z6OEgzPzvrzA',
+      apiKey: process.env.NEXT_PUBLIC_MAPTILER_KEY ?? '',
       language: 'no',
       country: 'no'
     });
