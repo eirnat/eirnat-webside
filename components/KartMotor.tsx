@@ -1260,8 +1260,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     const mapOptions = {
       container: mapContainer.current,
       style: initialStyleUrl,
-      center: [10.7522, 59.9139], // Oslo som startpunkt
-      zoom: 12,
+      center: [8.5, 61.5], // Mer sentralt startpunkt for Sor-Norge
+      zoom: 5.5,
       preserveDrawingBuffer: true,
       crossOrigin: 'anonymous',
       canvasContextAttributes: {
