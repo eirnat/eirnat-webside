@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { GeocodingControl } from '@maptiler/geocoding-control/maplibregl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -19,9 +19,10 @@ type KartMotorProps = {
   activeTool: ActiveTool;
   onClear: number;
   onUndo: number;
-  editingAnnotation: { id: string; text: string; size: number; rotation: number; coordinates: Position } | null;
-  onEditingAnnotationChange: (annotation: { id: string; text: string; size: number; rotation: number; coordinates: Position } | null) => void;
+  editingAnnotation: { id: string; text: string; size: number; rotation: number; coordinates: Position; hasBackground: boolean } | null;
+  onEditingAnnotationChange: (annotation: { id: string; text: string; size: number; rotation: number; coordinates: Position; hasBackground: boolean } | null) => void;
   showLegend: boolean;
+  onTextAnnotationCreated: () => void;
 };
 
   export type KartMotorHandle = {
@@ -35,6 +36,7 @@ type Annotation = {
   size: number;
   rotation: number;
   coordinates: Position;
+  hasBackground: boolean;
 };
 
 type FeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry>;
@@ -70,6 +72,38 @@ function drawNoEntrySign() {
     ctx.fill();
     ctx.fillStyle = 'white';
     ctx.fillRect(size * 0.2, size * 0.42, size * 0.6, size * 0.16);
+  }
+  return ctx?.getImageData(0, 0, size, size) ?? null;
+}
+
+function drawAnnotationBackgroundBox() {
+  const size = 32;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const radius = 6;
+    const x = 1;
+    const y = 1;
+    const w = size - 2;
+    const h = size - 2;
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
   return ctx?.getImageData(0, 0, size, size) ?? null;
 }
@@ -148,7 +182,7 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
 };
 
 const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function KartMotor(
-  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange, showLegend },
+  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange, showLegend, onTextAnnotationCreated },
   ref
 ) {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -166,14 +200,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     Array<'closed-segment' | 'closed-sign' | 'detour-segment' | 'detour-point' | 'annotation'>
   >([]);
   const draggingAnnotationIdRef = useRef<string | null>(null);
+  const markersRef = useRef<Record<string, maplibregl.Marker>>({});
   const annotationPopupRef = useRef<maplibregl.Popup | null>(null);
-  const lastEditingAnnotationSentRef = useRef<{ id: string; text: string; size: number; rotation: number; coordinates: Position } | null>(null);
+  const lastEditingAnnotationSentRef = useRef<{ id: string; text: string; size: number; rotation: number; coordinates: Position; hasBackground: boolean } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [showZoomHint, setShowZoomHint] = useState(true);
   const editingAnnotationIdRef = useRef<string | null>(null);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
+  const annotationIdsKey = useMemo(
+    () => annotations.map((annotation) => annotation.id).sort().join('|'),
+    [annotations]
+  );
   const mapStyleRef = useRef(mapStyle);
 
   const lastAppliedMapStyleRef = useRef<'dataviz' | 'streets' | null>(null);
@@ -220,9 +259,138 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     source?.setData(data);
   };
 
+  const removeAllAnnotationMarkers = () => {
+    for (const marker of Object.values(markersRef.current)) {
+      marker.remove();
+    }
+    markersRef.current = {};
+  };
+
+  const syncAnnotationMarkersById = (nextAnnotations: Annotation[]) => {
+    if (!map.current) return;
+    const markerMap = markersRef.current;
+    const nextIds = new Set(nextAnnotations.map((annotation) => annotation.id));
+
+    for (const [id, marker] of Object.entries(markerMap)) {
+      if (!nextIds.has(id)) {
+        marker.remove();
+        delete markerMap[id];
+      }
+    }
+
+    for (const annotation of nextAnnotations) {
+      if (markerMap[annotation.id]) continue;
+      const box = document.createElement('div');
+      box.style.display = 'flex';
+      box.style.alignItems = 'center';
+      box.style.justifyContent = 'center';
+      box.style.whiteSpace = 'nowrap';
+      box.style.textAlign = 'center';
+      box.style.lineHeight = '1';
+      box.style.background = 'transparent';
+      box.style.border = 'none';
+      box.style.borderRadius = '0';
+      box.style.padding = '0';
+      box.style.pointerEvents = 'auto';
+      box.style.cursor = 'move';
+      box.style.userSelect = 'none';
+      box.style.width = 'fit-content';
+      box.style.height = 'fit-content';
+      box.style.zIndex = '100';
+
+      const marker = new maplibregl.Marker({
+        element: box,
+        draggable: true,
+        anchor: 'center'
+      })
+        .setLngLat(annotation.coordinates)
+        .addTo(map.current);
+
+      box.addEventListener('click', (event) => {
+        if (map.current?.isEasing()) return;
+        event.stopPropagation();
+        skipNextMapClickRef.current = true;
+        setEditingAnnotationId((prev) => (prev === annotation.id ? prev : annotation.id));
+      });
+
+      marker.on('dragstart', () => {
+        map.current?.dragPan.disable();
+        draggingAnnotationIdRef.current = annotation.id;
+        setEditingAnnotationId((prev) => (prev === annotation.id ? prev : annotation.id));
+        closeAnnotationPopup();
+        if (map.current) map.current.getCanvas().style.cursor = 'grabbing';
+      });
+
+      marker.on('dragend', () => {
+        map.current?.dragPan.enable();
+        draggingAnnotationIdRef.current = null;
+        const dragged = marker.getLngLat();
+        const coordinates: Position = [dragged.lng, dragged.lat];
+        setAnnotations((prev) =>
+          prev.map((item) =>
+            item.id === annotation.id
+              ? { ...item, coordinates }
+              : item
+          )
+        );
+        const current = annotationsRef.current.find((item) => item.id === annotation.id);
+        if (current) {
+          onEditingAnnotationChange({
+            ...current,
+            coordinates
+          });
+        }
+        if (map.current) {
+          map.current.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
+        }
+      });
+
+      markerMap[annotation.id] = marker;
+    }
+  };
+
+  const updateAnnotationMarkers = (nextAnnotations: Annotation[]) => {
+    for (const annotation of nextAnnotations) {
+      const marker = markersRef.current[annotation.id];
+      if (!marker) continue;
+      const box = marker.getElement();
+      box.textContent = annotation.text;
+      box.style.fontSize = `${annotation.size}px`;
+      box.style.fontFamily = 'Arial, sans-serif';
+      box.style.fontWeight = 'bold';
+      box.style.transform = `rotate(${annotation.rotation}deg)`;
+      box.style.transformOrigin = 'center center';
+      if (annotation.hasBackground) {
+        box.style.background = '#ffffff';
+        box.style.border = '2px solid #000000';
+        box.style.borderRadius = '6px';
+        box.style.padding = '5px 10px';
+      } else {
+        box.style.background = 'transparent';
+        box.style.border = 'none';
+        box.style.borderRadius = '0';
+        box.style.padding = '0';
+      }
+      if (draggingAnnotationIdRef.current !== annotation.id) {
+        marker.setLngLat(annotation.coordinates);
+      }
+    }
+  };
+
   const closeAnnotationPopup = () => {
     annotationPopupRef.current?.remove();
     annotationPopupRef.current = null;
+  };
+
+  const getPopupPlacement = (coordinates: Position): { anchor: 'bottom' | 'top'; offset: [number, number] } => {
+    const mapInstance = map.current;
+    if (!mapInstance) return { anchor: 'bottom', offset: [0, -50] };
+    const projected = mapInstance.project(coordinates);
+    const mapHeight = mapInstance.getContainer().clientHeight;
+    if (projected.y > mapHeight / 2) {
+      return { anchor: 'bottom', offset: [0, -50] };
+    }
+    return { anchor: 'top', offset: [0, 50] };
   };
 
   const clearAllDrawings = () => {
@@ -238,6 +406,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     updateSourceData('detour-road', emptyFeatureCollection());
     updateSourceData('closed-signs', emptyFeatureCollection());
     updateSourceData('annotations-source', emptyFeatureCollection());
+    removeAllAnnotationMarkers();
     closeAnnotationPopup();
   };
 
@@ -311,7 +480,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         id: annotation.id,
         text: annotation.text,
         size: annotation.size,
-        rotation: annotation.rotation
+        rotation: annotation.rotation,
+        hasBackground: annotation.hasBackground
       },
       geometry: {
         type: 'Point',
@@ -431,6 +601,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
   const initializeMapLayers = (mapInstance: maplibregl.Map) => {
     const overlayLayerIds = [
+      'annotations-bg-layer',
       'annotations-layer',
       'closed-sign-layer',
       'detour-road-layer',
@@ -456,9 +627,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (mapInstance.getSource(sid)) mapInstance.removeSource(sid);
     }
     if (mapInstance.hasImage('no-entry')) mapInstance.removeImage('no-entry');
+    if (mapInstance.hasImage('annotation-bg-box')) mapInstance.removeImage('annotation-bg-box');
 
     const imageData = drawNoEntrySign();
     if (imageData) mapInstance.addImage('no-entry', imageData);
+    const annotationBgImage = drawAnnotationBackgroundBox();
+    if (annotationBgImage) mapInstance.addImage('annotation-bg-box', annotationBgImage);
 
     mapInstance.addSource('closed-road', {
       type: 'geojson',
@@ -604,12 +778,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       source: 'annotations-source',
       layout: {
         'text-field': ['get', 'text'],
-        'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+        'text-font': [
+          'case',
+          ['==', ['get', 'hasBackground'], true],
+          ['literal', ['Arial Unicode MS Regular']],
+          ['literal', ['Arial Unicode MS Regular']]
+        ],
         'text-size': ['get', 'size'],
         'text-rotate': ['get', 'rotation'],
         'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
         'text-radial-offset': 0.5,
-        'text-justify': 'auto'
+        'text-justify': 'auto',
+        'text-line-height': 1
       },
       paint: {
         'text-color': '#111827',
@@ -618,46 +798,37 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         'text-halo-blur': 0.5
       }
     });
-
-    mapInstance.on('mousedown', 'annotations-layer', (event) => {
-      const feature = event.features?.[0] as GeoJSON.Feature<GeoJSON.Point> | undefined;
-      const id = typeof feature?.properties?.id === 'string' ? feature.properties.id : null;
-      if (!id) return;
-      skipNextMapClickRef.current = true;
-      draggingAnnotationIdRef.current = id;
-      setEditingAnnotationId((prev) => (prev === id ? prev : id));
-      closeAnnotationPopup();
-      mapInstance.dragPan.disable();
-      mapInstance.getCanvas().style.cursor = 'grabbing';
-    });
-
-    mapInstance.on('click', 'annotations-layer', (event) => {
-      const feature = event.features?.[0] as GeoJSON.Feature<GeoJSON.Point> | undefined;
-      const id = typeof feature?.properties?.id === 'string' ? feature.properties.id : null;
-      if (!id) return;
-      skipNextMapClickRef.current = true;
-      setEditingAnnotationId((prev) => (prev === id ? prev : id));
-    });
-
-    mapInstance.on('mousemove', (event) => {
-      if (!draggingAnnotationIdRef.current) return;
-      const draggedId = draggingAnnotationIdRef.current;
-      const coordinates: Position = [event.lngLat.lng, event.lngLat.lat];
-      setAnnotations((prev) =>
-        prev.map((annotation) =>
-          annotation.id === draggedId
-            ? { ...annotation, coordinates }
-            : annotation
-        )
-      );
-    });
-
-    mapInstance.on('mouseup', () => {
-      if (!draggingAnnotationIdRef.current) return;
-      draggingAnnotationIdRef.current = null;
-      mapInstance.dragPan.enable();
-      mapInstance.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
-    });
+    mapInstance.addLayer({
+      id: 'annotations-bg-layer',
+      type: 'symbol',
+      source: 'annotations-source',
+      filter: ['==', ['get', 'hasBackground'], true],
+      layout: {
+        'icon-image': 'annotation-bg-box',
+        'icon-size': 1,
+        'icon-text-fit': 'both',
+        'icon-text-fit-padding': [6, 12, 6, 12],
+        'icon-allow-overlap': true,
+        'icon-rotate': ['get', 'rotation'],
+        'text-field': ['get', 'text'],
+        'text-size': ['get', 'size'],
+        'text-font': [
+          'case',
+          ['==', ['get', 'hasBackground'], true],
+          ['literal', ['Arial Unicode MS Regular']],
+          ['literal', ['Arial Unicode MS Regular']]
+        ],
+        'text-rotate': ['get', 'rotation'],
+        'text-max-width': 100,
+        'text-line-height': 1,
+        'text-allow-overlap': true
+      },
+      paint: {
+        'text-opacity': 0
+      }
+    }, 'annotations-layer');
+    mapInstance.setLayoutProperty('annotations-layer', 'visibility', 'none');
+    mapInstance.setLayoutProperty('annotations-bg-layer', 'visibility', 'none');
 
     mapInstance.on('mouseleave', 'nvdb-hitbox', () => {
       mapInstance.setPaintProperty('nvdb-hover-layer', 'line-opacity', 0);
@@ -804,13 +975,17 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
         await fetchNvdbRoadNetwork();
 
-        const previousNvdbVisibility: Partial<Record<(typeof NVDB_EXPORT_HIDE_LAYER_IDS)[number], string>> =
-          {};
-        for (const layerId of NVDB_EXPORT_HIDE_LAYER_IDS) {
+        const exportHideLayerIds = [
+          ...NVDB_EXPORT_HIDE_LAYER_IDS,
+          'annotations-layer',
+          'annotations-bg-layer'
+        ];
+        const previousLayerVisibility: Record<string, 'visible' | 'none'> = {};
+        for (const layerId of exportHideLayerIds) {
           if (!mapInstance.getLayer(layerId)) continue;
           try {
             const v = mapInstance.getLayoutProperty(layerId, 'visibility');
-            previousNvdbVisibility[layerId] =
+            previousLayerVisibility[layerId] =
               typeof v === 'string' && (v === 'visible' || v === 'none') ? v : 'visible';
             mapInstance.setLayoutProperty(layerId, 'visibility', 'none');
           } catch {
@@ -819,13 +994,13 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         }
 
         const restoreNvdbExportLayers = () => {
-          for (const layerId of NVDB_EXPORT_HIDE_LAYER_IDS) {
-            if (!(layerId in previousNvdbVisibility)) continue;
+          for (const layerId of exportHideLayerIds) {
+            if (!(layerId in previousLayerVisibility)) continue;
             try {
               mapInstance.setLayoutProperty(
                 layerId,
                 'visibility',
-                previousNvdbVisibility[layerId] as 'visible' | 'none'
+                previousLayerVisibility[layerId]
               );
             } catch {
               // ignorer
@@ -834,7 +1009,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           mapInstance.triggerRepaint();
         };
 
-        const runCapture = () => {
+        const runCapture = async () => {
           const exportCanvas = document.createElement('canvas');
           exportCanvas.width = canvas.width;
           exportCanvas.height = canvas.height;
@@ -847,8 +1022,61 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
             ctx.drawImage(canvas, 0, 0);
 
+            const dpr = window.devicePixelRatio || 1;
+            const annotations = annotationsRef.current;
+            if (annotations.length > 0 && 'fonts' in document) {
+              await document.fonts.ready;
+            }
+            for (const annotation of annotations) {
+              const projected = mapInstance.project(annotation.coordinates);
+              const x = projected.x * dpr;
+              const y = projected.y * dpr;
+              const fontSize = Math.max(10, annotation.size) * dpr;
+
+              ctx.save();
+              ctx.translate(x, y);
+              ctx.rotate((annotation.rotation * Math.PI) / 180);
+              ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+
+              const metrics = ctx.measureText(annotation.text);
+              const textWidth = metrics.width;
+              const textHeight = fontSize;
+              if (annotation.hasBackground) {
+                const padX = 10 * dpr;
+                const padY = 5 * dpr;
+                const rawBoxX = -textWidth / 2 - padX;
+                const rawBoxY = -textHeight / 2 - padY;
+                const rawBoxW = textWidth + padX * 2;
+                const rawBoxH = textHeight + padY * 2;
+                const borderWidth = 2 * dpr;
+                const boxX = Math.round(rawBoxX);
+                const boxY = Math.round(rawBoxY);
+                const boxW = Math.round(rawBoxW);
+                const boxH = Math.round(rawBoxH);
+                const radius = 6 * dpr;
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.beginPath();
+                ctx.roundRect(boxX, boxY, boxW, boxH, radius);
+                ctx.closePath();
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = borderWidth;
+                ctx.stroke();
+              }
+
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillStyle = '#111827';
+              ctx.fillText(annotation.text, 0, 0);
+              ctx.restore();
+            }
+
             if (showLegend) {
-              const dpr = window.devicePixelRatio || 1;
               const boxX = 16 * dpr;
               const boxY = exportCanvas.height - 120 * dpr;
               const boxW = 210 * dpr;
@@ -892,7 +1120,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               drawLegendLine(row2Y, SVV_COLORS.detourOutline, SVV_COLORS.detour);
 
               ctx.fillStyle = '#111827';
-              ctx.font = `${12 * dpr}px "LFT Etica", Arial, sans-serif`;
+              ctx.font = `${12 * dpr}px Arial, sans-serif`;
               ctx.textAlign = 'left';
               ctx.textBaseline = 'middle';
               ctx.fillText('Stengt veg', boxX + 98 * dpr, row1Y);
@@ -916,7 +1144,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           captured = true;
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-              runCapture();
+              void runCapture();
             });
           });
         };
@@ -987,10 +1215,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             text: 'Ny tekst',
             size: 16,
             rotation: 0,
-            coordinates: clickedPosition
+            coordinates: clickedPosition,
+            hasBackground: false
           }
         ]);
         setEditingAnnotationId(newId);
+        onTextAnnotationCreated();
         return;
       }
 
@@ -1039,6 +1269,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     return () => {
       if (moveDebounceRef.current) window.clearTimeout(moveDebounceRef.current);
       closeAnnotationPopup();
+      removeAllAnnotationMarkers();
       map.current?.removeControl(geocodingControl);
       map.current?.remove();
       map.current = null;
@@ -1098,8 +1329,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     container.style.borderRadius = '12px';
     container.style.boxShadow = '0 10px 25px rgba(15, 23, 42, 0.18)';
     container.style.padding = '12px';
-    container.style.fontFamily = 'LFT Etica, Arial, sans-serif';
+    container.style.fontFamily = 'Arial, sans-serif';
     container.style.color = '#1f2937';
+    container.addEventListener('mousedown', (event) => event.stopPropagation());
+    container.addEventListener('click', (event) => event.stopPropagation());
+    container.addEventListener('wheel', (event) => event.stopPropagation());
 
     const textInput = document.createElement('input');
     textInput.type = 'text';
@@ -1112,7 +1346,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     textInput.style.fontSize = '14px';
     textInput.style.marginBottom = '10px';
     textInput.style.outline = 'none';
-    textInput.style.fontFamily = 'LFT Etica, Arial, sans-serif';
+    textInput.style.fontFamily = 'Arial, sans-serif';
+    textInput.addEventListener('focus', () => {
+      textInput.select();
+    });
     textInput.addEventListener('input', () => {
       const nextText = textInput.value;
       setAnnotations((prev) =>
@@ -1152,6 +1389,29 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
     container.appendChild(sizeInput);
 
+    const backgroundLabel = document.createElement('label');
+    backgroundLabel.style.display = 'flex';
+    backgroundLabel.style.alignItems = 'center';
+    backgroundLabel.style.gap = '6px';
+    backgroundLabel.style.fontSize = '12px';
+    backgroundLabel.style.marginBottom = '10px';
+    const backgroundToggle = document.createElement('input');
+    backgroundToggle.type = 'checkbox';
+    backgroundToggle.checked = selected.hasBackground;
+    backgroundToggle.addEventListener('change', () => {
+      const nextHasBackground = backgroundToggle.checked;
+      setAnnotations((prev) =>
+        prev.map((annotation) =>
+          annotation.id === selected.id
+            ? { ...annotation, hasBackground: nextHasBackground }
+            : annotation
+        )
+      );
+    });
+    backgroundLabel.appendChild(backgroundToggle);
+    backgroundLabel.appendChild(document.createTextNode('Bakgrunnsboks'));
+    container.appendChild(backgroundLabel);
+
     const rotationLabel = document.createElement('label');
     rotationLabel.textContent = `Rotasjon: ${selected.rotation}°`;
     rotationLabel.style.display = 'block';
@@ -1161,8 +1421,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     const rotationInput = document.createElement('input');
     rotationInput.type = 'range';
-    rotationInput.min = '0';
-    rotationInput.max = '360';
+    rotationInput.min = '-180';
+    rotationInput.max = '180';
     rotationInput.step = '5';
     rotationInput.value = String(selected.rotation);
     rotationInput.style.width = '100%';
@@ -1203,34 +1463,23 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
     actions.appendChild(deleteBtn);
 
-    const doneBtn = document.createElement('button');
-    doneBtn.type = 'button';
-    doneBtn.textContent = '✓ Ferdig';
-    doneBtn.style.flex = '1';
-    doneBtn.style.border = '1px solid #86efac';
-    doneBtn.style.background = '#dcfce7';
-    doneBtn.style.color = '#166534';
-    doneBtn.style.borderRadius = '8px';
-    doneBtn.style.padding = '8px 10px';
-    doneBtn.style.fontSize = '12px';
-    doneBtn.style.fontWeight = '600';
-    doneBtn.style.cursor = 'pointer';
-    doneBtn.addEventListener('click', () => {
-      setEditingAnnotationId(null);
-    });
-    actions.appendChild(doneBtn);
-
     container.appendChild(actions);
 
+    const popupPlacement = getPopupPlacement(selected.coordinates);
     closeAnnotationPopup();
     annotationPopupRef.current = new maplibregl.Popup({
+      anchor: popupPlacement.anchor,
       closeButton: false,
       closeOnClick: false,
-      offset: 16
+      offset: popupPlacement.offset
     })
       .setLngLat(selected.coordinates)
       .setDOMContent(container)
       .addTo(map.current);
+    window.requestAnimationFrame(() => {
+      textInput.focus();
+      textInput.select();
+    });
   }, [editingAnnotationId]);
 
   useEffect(() => {
@@ -1250,7 +1499,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       text: selected.text,
       size: selected.size,
       rotation: selected.rotation,
-      coordinates: selected.coordinates
+      coordinates: selected.coordinates,
+      hasBackground: selected.hasBackground
     };
     const last = lastEditingAnnotationSentRef.current;
     if (
@@ -1260,7 +1510,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       last.size === next.size &&
       last.rotation === next.rotation &&
       last.coordinates[0] === next.coordinates[0] &&
-      last.coordinates[1] === next.coordinates[1]
+      last.coordinates[1] === next.coordinates[1] &&
+      last.hasBackground === next.hasBackground
     ) {
       return;
     }
@@ -1279,7 +1530,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           annotation.size === editingAnnotation.size &&
           annotation.rotation === editingAnnotation.rotation &&
           annotation.coordinates[0] === editingAnnotation.coordinates[0] &&
-          annotation.coordinates[1] === editingAnnotation.coordinates[1]
+          annotation.coordinates[1] === editingAnnotation.coordinates[1] &&
+          annotation.hasBackground === editingAnnotation.hasBackground
         ) {
           return annotation;
         }
@@ -1289,12 +1541,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           text: editingAnnotation.text,
           size: editingAnnotation.size,
           rotation: editingAnnotation.rotation,
-          coordinates: editingAnnotation.coordinates
+          coordinates: editingAnnotation.coordinates,
+          hasBackground: editingAnnotation.hasBackground
         };
       });
       return changed ? next : prev;
     });
   }, [editingAnnotation]);
+
+  useEffect(() => {
+    if (!map.current) return;
+    syncAnnotationMarkersById(annotationsRef.current);
+  }, [annotationIdsKey]);
 
   useEffect(() => {
     if (!map.current) return;
@@ -1304,7 +1562,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         id: annotation.id,
         text: annotation.text,
         size: annotation.size,
-        rotation: annotation.rotation
+        rotation: annotation.rotation,
+        hasBackground: annotation.hasBackground
       },
       geometry: {
         type: 'Point',
@@ -1315,12 +1574,15 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       type: 'FeatureCollection',
       features: annotationFeatures
     });
+    updateAnnotationMarkers(annotations);
     if (!editingAnnotationId) return;
     const selected = annotations.find((annotation) => annotation.id === editingAnnotationId);
     if (!selected) {
       setEditingAnnotationId(null);
       return;
     }
+    const popupPlacement = getPopupPlacement(selected.coordinates);
+    annotationPopupRef.current?.setOffset(popupPlacement.offset);
     annotationPopupRef.current?.setLngLat(selected.coordinates);
   }, [annotations]);
 
@@ -1330,7 +1592,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       {showLegend && (
         <div
           className="absolute bottom-10 left-4 rounded-md bg-white p-3 shadow-lg"
-          style={{ fontFamily: 'LFT Etica, Arial, sans-serif' }}
+          style={{ fontFamily: 'Arial, sans-serif' }}
         >
           <div className="flex items-center gap-2 text-xs text-slate-800">
             <div className="relative h-2.5 w-16">
