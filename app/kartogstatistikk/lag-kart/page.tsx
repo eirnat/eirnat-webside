@@ -338,7 +338,7 @@ export default function LagKartPage() {
             </button>
 
             <div className="border-t border-slate-200 pt-4 text-[10px] uppercase tracking-wider text-slate-400">
-              <div>Utviklet av Eirnat</div>
+              <div>Utviklet av Eirik Natlandsmyr</div>
               <a
                 href="mailto:hei@eirnat.no"
                 className="transition-colors hover:text-slate-500"
@@ -516,7 +516,7 @@ export default function LagKartPage() {
             </button>
 
             <div className="border-t border-slate-200 pt-3 text-[10px] uppercase tracking-wider text-slate-400">
-              <div>Utviklet av Eirnat</div>
+              <div>Utviklet av Eirik Natlandsmyr</div>
               <a
                 href="mailto:hei@eirnat.no"
                 className="transition-colors hover:text-slate-500"
