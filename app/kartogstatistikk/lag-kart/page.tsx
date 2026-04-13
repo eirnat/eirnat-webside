@@ -1,9 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Download, GitBranch, List, RotateCcw, Slash, Type } from "lucide-react";
+import { AlertTriangle, Download, GitBranch, List, RotateCcw, Slash, Type } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ActiveTool, type KartMotorHandle } from "@/components/KartMotor";
+import { type ActiveTool, type AnnotationBackgroundStyle, type KartMotorHandle } from "@/components/KartMotor";
 
 const KartMotor = dynamic(() => import("@/components/KartMotor"), {
   ssr: false,
@@ -18,9 +18,6 @@ const toolButtonGrid =
 
 const toolButtonFull =
   `${toolButtonBase} flex items-center justify-center gap-2`;
-
-const signIconButtonBase =
-  "flex size-[3.25rem] shrink-0 items-center justify-center rounded-xl border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95";
 
 const quickActionBtn =
   "flex flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-2 text-center text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95";
@@ -38,7 +35,7 @@ export default function LagKartPage() {
     size: number;
     rotation: number;
     coordinates: [number, number];
-    hasBackground: boolean;
+    backgroundStyle: AnnotationBackgroundStyle;
   } | null>(null);
   const [mapStyle, setMapStyle] = useState<"dataviz" | "streets">("streets");
 
@@ -71,7 +68,16 @@ export default function LagKartPage() {
   }, []);
 
   const handleEditingAnnotationChange = useCallback(
-    (annotation: { id: string; text: string; size: number; rotation: number; coordinates: [number, number]; hasBackground: boolean } | null) => {
+    (
+      annotation: {
+        id: string;
+        text: string;
+        size: number;
+        rotation: number;
+        coordinates: [number, number];
+        backgroundStyle: AnnotationBackgroundStyle;
+      } | null
+    ) => {
       setEditingAnnotation((prev) => {
         if (!annotation) return null;
         if (
@@ -82,7 +88,7 @@ export default function LagKartPage() {
           prev.rotation === annotation.rotation &&
           prev.coordinates[0] === annotation.coordinates[0] &&
           prev.coordinates[1] === annotation.coordinates[1] &&
-          prev.hasBackground === annotation.hasBackground
+          prev.backgroundStyle === annotation.backgroundStyle
         ) {
           return prev;
         }
@@ -123,10 +129,10 @@ export default function LagKartPage() {
                       linjene skal treffe riktig.
                     </li>
                     <li>
-                      <span className="font-medium">Tegn tiltak:</span> Velg
-                      &quot;Stengt veg&quot; eller &quot;Alternativ rute&quot; og trykk på
-                      veglenkene. (Tips: En linje er nok selv om både vei og fortau
-                      stenges).
+                      <span className="font-medium">Tegn:</span> Velg
+                      &quot;Stengt veg&quot;, &quot;Redusert fremkommelighet&quot; (oransje)
+                      eller &quot;Alternativ rute&quot; og trykk på veglenkene. (Tips: En
+                      linje er nok selv om både vei og fortau stenges).
                     </li>
                     <li>
                       <span className="font-medium">Plasser skilt:</span> Sett ut
@@ -155,120 +161,108 @@ export default function LagKartPage() {
               <div className="mb-2 text-xs font-bold tracking-wide text-slate-500">
                 VERKTØY
               </div>
-              <div className="flex flex-col gap-6">
-                <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-3">
+                <div className="grid grid-cols-3 gap-1">
                   <button
                     type="button"
-                    onClick={() =>
-                      setActiveTool((prev) =>
-                        prev === "closed" ? "none" : "closed"
-                      )
-                    }
-                    className={`${toolButtonGrid} ${
+                    onClick={() => setActiveTool((prev) => (prev === "closed" ? "none" : "closed"))}
+                    className={`flex min-h-[75px] flex-col items-center justify-center gap-1 rounded-lg border px-1 py-4 text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
                       activeTool === "closed"
                         ? "border-2 border-red-600 bg-red-600 text-white"
                         : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
                     }`}
                   >
-                    <Slash
-                      className={`h-5 w-5 shrink-0 ${
-                        activeTool === "closed"
-                          ? "text-white"
-                          : "text-red-600"
-                      }`}
-                    />
-                    <span>Stengt vei</span>
+                    <Slash className={`h-4 w-4 shrink-0 ${activeTool === "closed" ? "text-white" : "text-red-600"}`} />
+                    <span>Stengt veg</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      setActiveTool((prev) =>
-                        prev === "detour" ? "none" : "detour"
-                      )
-                    }
-                    className={`${toolButtonGrid} ${
+                    onClick={() => setActiveTool((prev) => (prev === "reduced" ? "none" : "reduced"))}
+                    className={`flex min-h-[75px] flex-col items-center justify-center gap-1 rounded-lg border px-1 py-4 text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                      activeTool === "reduced"
+                        ? "border-2 border-amber-600 bg-amber-500 text-white"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <AlertTriangle className={`h-4 w-4 shrink-0 ${activeTool === "reduced" ? "text-white" : "text-amber-600"}`} />
+                    <span>Redusert</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTool((prev) => (prev === "detour" ? "none" : "detour"))}
+                    className={`flex min-h-[75px] flex-col items-center justify-center gap-1 rounded-lg border px-1 py-4 text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
                       activeTool === "detour"
                         ? "border-2 border-green-600 bg-green-600 text-white"
                         : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
                     }`}
                   >
-                    <GitBranch
-                      className={`h-5 w-5 shrink-0 ${
-                        activeTool === "detour"
-                          ? "text-white"
-                          : "text-green-600"
-                      }`}
-                    />
-                    <span>Omkjøringsvei</span>
+                    <GitBranch className={`h-4 w-4 shrink-0 ${activeTool === "detour" ? "text-white" : "text-green-600"}`} />
+                    <span>Omkjøring</span>
                   </button>
                 </div>
-                <div className="flex gap-2">
+
+                <div className="grid grid-cols-4 gap-1">
                   <button
                     type="button"
-                    onClick={() =>
-                      setActiveTool((prev) =>
-                        prev === "text" ? "none" : "text"
-                      )
-                    }
-                    className={`${toolButtonFull} min-w-0 flex-1 ${
-                      activeTool === "text"
-                        ? "border-2 border-slate-700 bg-slate-700 text-white"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    <Type
-                      className={`h-5 w-5 shrink-0 ${
-                        activeTool === "text"
-                          ? "text-white"
-                          : "text-slate-700"
-                      }`}
-                    />
-                    Legg til tekst
-                  </button>
-                  <button
-                    type="button"
-                    title="Sett ut skilt"
-                    aria-label="Sett ut skilt"
-                    onClick={() =>
-                      setActiveTool((prev) =>
-                        prev === "sign" ? "none" : "sign"
-                      )
-                    }
-                    className={`${signIconButtonBase} ${
+                    title="Innkjøring forbudt"
+                    onClick={() => setActiveTool((prev) => (prev === "sign" ? "none" : "sign"))}
+                    className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
                       activeTool === "sign"
-                        ? "border-2 border-amber-600 bg-amber-600 text-white"
+                        ? "border-2 border-blue-700 bg-blue-50"
                         : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
                     }`}
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-5 w-5 shrink-0"
-                      xmlns="http://www.w3.org/2000/svg"
-                      aria-hidden
-                    >
-                      <circle
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        fill="currentColor"
-                        className={
-                          activeTool === "sign"
-                            ? "text-white"
-                            : "text-[#E60000]"
-                        }
-                      />
-                      <rect
-                        x="6"
-                        y="11"
-                        width="12"
-                        height="2.5"
-                        fill={
-                          activeTool === "sign" ? "#E60000" : "#ffffff"
-                        }
-                      />
-                    </svg>
+                    <img src="/icons/stengtvei.svg" alt="" className="h-8 w-8" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Trafikklys"
+                    onClick={() => setActiveTool((prev) => (prev === "traffic-light" ? "none" : "traffic-light"))}
+                    className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                      activeTool === "traffic-light"
+                        ? "border-2 border-blue-700 bg-blue-50"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <img src="/icons/lyskryss.svg" alt="" className="h-8 w-8" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Veiarbeid"
+                    onClick={() => setActiveTool((prev) => (prev === "road-work" ? "none" : "road-work"))}
+                    className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                      activeTool === "road-work"
+                        ? "border-2 border-blue-700 bg-blue-50"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <img src="/icons/veiarbeid.svg" alt="" className="h-8 w-8" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Fare for kø"
+                    onClick={() => setActiveTool((prev) => (prev === "queue" ? "none" : "queue"))}
+                    className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                      activeTool === "queue"
+                        ? "border-2 border-blue-700 bg-blue-50"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <img src="/icons/trafikkork.svg" alt="" className="h-8 w-8" />
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTool((prev) => (prev === "text" ? "none" : "text"))}
+                  className={`${toolButtonFull} w-full ${
+                    activeTool === "text"
+                      ? "border-2 border-slate-700 bg-slate-700 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <Type className={`h-5 w-5 shrink-0 ${activeTool === "text" ? "text-white" : "text-slate-700"}`} />
+                  Legg til tekst
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowLegend((prev) => !prev)}
@@ -350,89 +344,126 @@ export default function LagKartPage() {
 
           {/* Mobil: prioritert rad øverst, resten under i samme scroll (aside) */}
           <div className="flex flex-col lg:hidden">
-            <div className="mb-4 grid w-full shrink-0 grid-cols-4 gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                setActiveTool((prev) => (prev === "closed" ? "none" : "closed"))
-              }
-              className={`${quickActionBtn} ${
-                activeTool === "closed"
-                  ? "border-2 border-red-600 bg-red-600 text-white"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <Slash
-                className={`h-4 w-4 shrink-0 ${
-                  activeTool === "closed" ? "text-white" : "text-red-600"
-                }`}
-              />
-              <span className="leading-tight">Stengt vei</span>
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setActiveTool((prev) => (prev === "detour" ? "none" : "detour"))
-              }
-              className={`${quickActionBtn} ${
-                activeTool === "detour"
-                  ? "border-2 border-green-600 bg-green-600 text-white"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <GitBranch
-                className={`h-4 w-4 shrink-0 ${
-                  activeTool === "detour" ? "text-white" : "text-green-600"
-                }`}
-              />
-              <span className="leading-tight">Omkjøring</span>
-            </button>
-            <button
-              type="button"
-              title="Sett ut skilt"
-              aria-label="Sett ut skilt"
-              onClick={() =>
-                setActiveTool((prev) => (prev === "sign" ? "none" : "sign"))
-              }
-              className={`${quickActionBtn} ${
-                activeTool === "sign"
-                  ? "border-2 border-amber-600 bg-amber-600 text-white"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="h-4 w-4 shrink-0"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden
-              >
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  fill="currentColor"
-                  className={
-                    activeTool === "sign" ? "text-white" : "text-[#E60000]"
+            <div className="mb-4 flex w-full shrink-0 flex-col gap-2">
+              <div className="grid grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveTool((prev) => (prev === "closed" ? "none" : "closed"))
                   }
-                />
-                <rect
-                  x="6"
-                  y="11"
-                  width="12"
-                  height="2.5"
-                  fill={activeTool === "sign" ? "#E60000" : "#ffffff"}
-                />
-              </svg>
-              <span className="leading-tight">Skilt</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setOnUndo((prev) => prev + 1)}
-              className={`${quickActionBtn} border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100`}
-            >
-              <RotateCcw className="h-4 w-4 shrink-0 text-slate-600" />
-              <span className="leading-tight">Angre</span>
-            </button>
+                  className={`${quickActionBtn} ${
+                    activeTool === "closed"
+                      ? "border-2 border-red-600 bg-red-600 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <Slash
+                    className={`h-4 w-4 shrink-0 ${
+                      activeTool === "closed" ? "text-white" : "text-red-600"
+                    }`}
+                  />
+                  <span className="leading-tight">Stengt vei</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveTool((prev) => (prev === "reduced" ? "none" : "reduced"))
+                  }
+                  className={`${quickActionBtn} ${
+                    activeTool === "reduced"
+                      ? "border-2 border-amber-600 bg-amber-500 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <AlertTriangle
+                    className={`h-4 w-4 shrink-0 ${
+                      activeTool === "reduced" ? "text-white" : "text-amber-600"
+                    }`}
+                  />
+                  <span className="leading-tight">Redusert</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveTool((prev) => (prev === "detour" ? "none" : "detour"))
+                  }
+                  className={`${quickActionBtn} ${
+                    activeTool === "detour"
+                      ? "border-2 border-green-600 bg-green-600 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <GitBranch
+                    className={`h-4 w-4 shrink-0 ${
+                      activeTool === "detour" ? "text-white" : "text-green-600"
+                    }`}
+                  />
+                  <span className="leading-tight">Omkjøring</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnUndo((prev) => prev + 1)}
+                  className={`${quickActionBtn} border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100`}
+                >
+                  <RotateCcw className="h-4 w-4 shrink-0 text-slate-600" />
+                  <span className="leading-tight">Angre</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1">
+                <button
+                  type="button"
+                  title="Innkjøring forbudt"
+                  onClick={() => setActiveTool((prev) => (prev === "sign" ? "none" : "sign"))}
+                  className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                    activeTool === "sign"
+                      ? "border-2 border-blue-700 bg-blue-50"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <img src="/icons/stengtvei.svg" alt="" className="h-8 w-8" />
+                </button>
+                <button
+                  type="button"
+                  title="Trafikklys"
+                  onClick={() =>
+                    setActiveTool((prev) => (prev === "traffic-light" ? "none" : "traffic-light"))
+                  }
+                  className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                    activeTool === "traffic-light"
+                      ? "border-2 border-blue-700 bg-blue-50"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <img src="/icons/lyskryss.svg" alt="" className="h-8 w-8" />
+                </button>
+                <button
+                  type="button"
+                  title="Veiarbeid"
+                  onClick={() =>
+                    setActiveTool((prev) => (prev === "road-work" ? "none" : "road-work"))
+                  }
+                  className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                    activeTool === "road-work"
+                      ? "border-2 border-blue-700 bg-blue-50"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <img src="/icons/veiarbeid.svg" alt="" className="h-8 w-8" />
+                </button>
+                <button
+                  type="button"
+                  title="Fare for kø"
+                  onClick={() => setActiveTool((prev) => (prev === "queue" ? "none" : "queue"))}
+                  className={`flex h-12 items-center justify-center rounded-lg border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                    activeTool === "queue"
+                      ? "border-2 border-blue-700 bg-blue-50"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <img src="/icons/trafikkork.svg" alt="" className="h-8 w-8" />
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col gap-4">
