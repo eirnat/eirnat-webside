@@ -1417,10 +1417,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
               ctx.save();
               ctx.fillStyle = '#ffffff';
-              ctx.strokeStyle = '#d1d5db';
-              ctx.lineWidth = 1 * dpr;
+              ctx.strokeStyle = '#000000';
+              ctx.lineWidth = 2 * dpr;
+              const legendRadius = 6 * dpr;
               ctx.beginPath();
-              ctx.rect(boxX, boxY, boxW, boxH);
+              ctx.roundRect(boxX, boxY, boxW, boxH, legendRadius);
               ctx.fill();
               ctx.stroke();
 
@@ -1971,7 +1972,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       <div ref={mapContainer} className="h-full w-full" />
       {showLegend && (
         <div
-          className="absolute bottom-10 left-4 rounded-md bg-white p-3 shadow-lg"
+          className="absolute bottom-10 left-4 rounded-md border-2 border-black bg-white p-3 shadow-lg"
           style={{ fontFamily: 'Arial, sans-serif' }}
         >
           <div className="flex items-center gap-2 text-xs text-slate-800">
