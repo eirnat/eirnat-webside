@@ -40,10 +40,34 @@ export default function LagKartPage() {
     coordinates: [number, number];
     hasBackground: boolean;
   } | null>(null);
-  const [mapStyle, setMapStyle] = useState<"dataviz" | "streets">("dataviz");
+  const [mapStyle, setMapStyle] = useState<"dataviz" | "streets">("streets");
 
   useEffect(() => {
     setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    document.title = "Lag omkjøringskart - eirnat.no";
+  }, []);
+
+  useEffect(() => {
+    const handleUndoShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
+
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      setOnUndo((prev) => prev + 1);
+    };
+
+    window.addEventListener("keydown", handleUndoShortcut);
+    return () => window.removeEventListener("keydown", handleUndoShortcut);
   }, []);
 
   const handleEditingAnnotationChange = useCallback(
@@ -87,11 +111,44 @@ export default function LagKartPage() {
               <h1 className="text-xl font-bold tracking-tight">
                 Lag omkjøringskart
               </h1>
-              <p className="mt-2 text-sm text-slate-600">
-                Velg verktøy og klikk på vegnettet for å markere stengning eller
-                omkjøring. Legg til tekst etter behov og last ned ferdig kart som
-                bilde.
-              </p>
+              <details className="mt-3 rounded-lg border-l-4 border-amber-400 bg-amber-50 p-4 shadow-sm">
+                <summary className="cursor-pointer list-none whitespace-nowrap text-sm font-bold text-slate-800">
+                  Se bruksanvisning
+                </summary>
+                <div className="mt-3 text-sm text-slate-700">
+                  <ol className="list-decimal space-y-2 pl-5">
+                    <li>
+                      <span className="font-medium">Zoom helt inn:</span> Zoom inn til
+                      gatenivå før du begynner å tegne. Dette er avgjørende for at
+                      linjene skal treffe riktig.
+                    </li>
+                    <li>
+                      <span className="font-medium">Tegn tiltak:</span> Velg
+                      &quot;Stengt veg&quot; eller &quot;Alternativ rute&quot; og trykk på
+                      veglenkene. (Tips: En linje er nok selv om både vei og fortau
+                      stenges).
+                    </li>
+                    <li>
+                      <span className="font-medium">Plasser skilt:</span> Sett ut
+                      stoppskilt der det er behov for det.
+                    </li>
+                    <li>
+                      <span className="font-medium">Velg utsnitt:</span> Juster kartet
+                      og velg karttype. Det du ser i bildet er det som blir med på
+                      fila.
+                    </li>
+                    <li>
+                      <span className="font-medium">Legg til tekst:</span> Sett inn
+                      tekstbokser helt til slutt (da slipper du å flytte dem hvis du
+                      endrer utsnittet).
+                    </li>
+                    <li>
+                      <span className="font-medium">Last ned:</span> Trykk på
+                      &quot;Last ned som PNG&quot; for å lagre kartet på din maskin.
+                    </li>
+                  </ol>
+                </div>
+              </details>
             </div>
 
             <div>
@@ -218,7 +275,7 @@ export default function LagKartPage() {
                   className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100"
                 >
                   <List className="h-4 w-4 shrink-0" />
-                  Vis tegnforklaring
+                  Vis/Skjul tegnforklaring
                 </button>
               </div>
             </div>
@@ -230,17 +287,6 @@ export default function LagKartPage() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setMapStyle("dataviz")}
-                  className={`${toolButtonGrid} ${
-                    mapStyle === "dataviz"
-                      ? "border-2 border-slate-700 bg-slate-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span>Enkelt</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setMapStyle("streets")}
                   className={`${toolButtonGrid} ${
                     mapStyle === "streets"
@@ -249,6 +295,17 @@ export default function LagKartPage() {
                   }`}
                 >
                   <span>Detaljert</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapStyle("dataviz")}
+                  className={`${toolButtonGrid} ${
+                    mapStyle === "dataviz"
+                      ? "border-2 border-slate-700 bg-slate-700 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <span>Enkelt</span>
                 </button>
               </div>
             </div>
@@ -407,7 +464,7 @@ export default function LagKartPage() {
                 className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100"
               >
                 <List className="h-4 w-4 shrink-0" />
-                Vis tegnforklaring
+                Vis/Skjul tegnforklaring
               </button>
             </div>
 
@@ -418,17 +475,6 @@ export default function LagKartPage() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setMapStyle("dataviz")}
-                  className={`${toolButtonGrid} ${
-                    mapStyle === "dataviz"
-                      ? "border-2 border-slate-700 bg-slate-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span>Enkelt</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setMapStyle("streets")}
                   className={`${toolButtonGrid} ${
                     mapStyle === "streets"
@@ -437,6 +483,17 @@ export default function LagKartPage() {
                   }`}
                 >
                   <span>Detaljert</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapStyle("dataviz")}
+                  className={`${toolButtonGrid} ${
+                    mapStyle === "dataviz"
+                      ? "border-2 border-slate-700 bg-slate-700 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <span>Enkelt</span>
                 </button>
               </div>
             </div>
