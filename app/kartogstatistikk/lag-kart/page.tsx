@@ -31,51 +31,31 @@ export default function LagKartPage() {
   const [activeTool, setActiveTool] = useState<ActiveTool>("none");
   const [onClear, setOnClear] = useState(0);
   const [onUndo, setOnUndo] = useState(0);
-  const [onDeleteEditingAnnotation, setOnDeleteEditingAnnotation] = useState(0);
   const [editingAnnotation, setEditingAnnotation] = useState<{
     id: string;
     text: string;
     size: number;
+    rotation: number;
+    coordinates: [number, number];
   } | null>(null);
-  const [localText, setLocalText] = useState("");
-  const [localSize, setLocalSize] = useState(16);
   const [mapStyle, setMapStyle] = useState<"dataviz" | "streets">("dataviz");
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!editingAnnotation) {
-      setLocalText("");
-      setLocalSize(16);
-      return;
-    }
-    setLocalText(editingAnnotation.text);
-    setLocalSize(editingAnnotation.size);
-  }, [editingAnnotation?.id]);
-
-  useEffect(() => {
-    if (!editingAnnotation) return;
-    const timer = window.setTimeout(() => {
-      setEditingAnnotation((prev) =>
-        prev && prev.id === editingAnnotation.id && prev.size !== localSize
-          ? { ...prev, size: localSize }
-          : prev
-      );
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [localSize, editingAnnotation]);
-
   const handleEditingAnnotationChange = useCallback(
-    (annotation: { id: string; text: string; size: number } | null) => {
+    (annotation: { id: string; text: string; size: number; rotation: number; coordinates: [number, number] } | null) => {
       setEditingAnnotation((prev) => {
         if (!annotation) return null;
         if (
           prev &&
           prev.id === annotation.id &&
           prev.text === annotation.text &&
-          prev.size === annotation.size
+          prev.size === annotation.size &&
+          prev.rotation === annotation.rotation &&
+          prev.coordinates[0] === annotation.coordinates[0] &&
+          prev.coordinates[1] === annotation.coordinates[1]
         ) {
           return prev;
         }
@@ -226,50 +206,6 @@ export default function LagKartPage() {
                   </button>
                 </div>
               </div>
-              {editingAnnotation ? (
-                <div className="mt-2 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs font-bold tracking-wide text-slate-500">
-                    TEKSTANNOTERING
-                  </div>
-                  <input
-                    type="text"
-                    value={localText}
-                    onChange={(event) => setLocalText(event.target.value)}
-                    onBlur={() =>
-                      setEditingAnnotation((prev) =>
-                        prev ? { ...prev, text: localText } : prev
-                      )
-                    }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
-                    placeholder="Skriv tekst..."
-                  />
-                  <div>
-                    <label className="mb-1 block text-xs text-slate-500">
-                      Skriftstørrelse: {localSize}
-                    </label>
-                    <input
-                      type="range"
-                      min={10}
-                      max={40}
-                      value={localSize}
-                      onChange={(event) =>
-                        setLocalSize(Number(event.target.value))
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOnDeleteEditingAnnotation((prev) => prev + 1);
-                      setEditingAnnotation(null);
-                    }}
-                    className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-semibold text-red-700 shadow-sm transition-all hover:bg-red-50 active:scale-95"
-                  >
-                    Slett denne teksten
-                  </button>
-                </div>
-              ) : null}
             </div>
 
             <div>
@@ -450,50 +386,6 @@ export default function LagKartPage() {
                 />
                 Legg til tekst
               </button>
-              {editingAnnotation ? (
-                <div className="mt-2 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs font-bold tracking-wide text-slate-500">
-                    TEKSTANNOTERING
-                  </div>
-                  <input
-                    type="text"
-                    value={localText}
-                    onChange={(event) => setLocalText(event.target.value)}
-                    onBlur={() =>
-                      setEditingAnnotation((prev) =>
-                        prev ? { ...prev, text: localText } : prev
-                      )
-                    }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
-                    placeholder="Skriv tekst..."
-                  />
-                  <div>
-                    <label className="mb-1 block text-xs text-slate-500">
-                      Skriftstørrelse: {localSize}
-                    </label>
-                    <input
-                      type="range"
-                      min={10}
-                      max={40}
-                      value={localSize}
-                      onChange={(event) =>
-                        setLocalSize(Number(event.target.value))
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOnDeleteEditingAnnotation((prev) => prev + 1);
-                      setEditingAnnotation(null);
-                    }}
-                    className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-semibold text-red-700 shadow-sm transition-all hover:bg-red-50 active:scale-95"
-                  >
-                    Slett denne teksten
-                  </button>
-                </div>
-              ) : null}
             </div>
 
             <div>
@@ -565,7 +457,6 @@ export default function LagKartPage() {
             onUndo={onUndo}
             editingAnnotation={editingAnnotation}
             onEditingAnnotationChange={handleEditingAnnotationChange}
-            onDeleteEditingAnnotation={onDeleteEditingAnnotation}
           />
         </section>
       </div>

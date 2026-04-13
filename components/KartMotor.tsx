@@ -6,7 +6,9 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 
 const SVV_COLORS = {
   closedRoad: "#E60000", // SVV Rød
+  closedRoadOutline: "#990000", // Mork rod casing
   detour: "#008b4a",     // SVV Grønn
+  detourOutline: "#005c31", // Mork gronn casing
   background: "#F5F5F5"
 };
 
@@ -17,9 +19,8 @@ type KartMotorProps = {
   activeTool: ActiveTool;
   onClear: number;
   onUndo: number;
-  editingAnnotation: { id: string; text: string; size: number } | null;
-  onEditingAnnotationChange: (annotation: { id: string; text: string; size: number } | null) => void;
-  onDeleteEditingAnnotation: number;
+  editingAnnotation: { id: string; text: string; size: number; rotation: number; coordinates: Position } | null;
+  onEditingAnnotationChange: (annotation: { id: string; text: string; size: number; rotation: number; coordinates: Position } | null) => void;
 };
 
   export type KartMotorHandle = {
@@ -31,6 +32,7 @@ type Annotation = {
   id: string;
   text: string;
   size: number;
+  rotation: number;
   coordinates: Position;
 };
 
@@ -145,7 +147,7 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
 };
 
 const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function KartMotor(
-  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange, onDeleteEditingAnnotation },
+  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange },
   ref
 ) {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -163,11 +165,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     Array<'closed-segment' | 'closed-sign' | 'detour-segment' | 'detour-point' | 'annotation'>
   >([]);
   const draggingAnnotationIdRef = useRef<string | null>(null);
-  const annotationsDataHashRef = useRef<string>('');
-  const lastEditingAnnotationSentRef = useRef<{ id: string; text: string; size: number } | null>(null);
+  const annotationPopupRef = useRef<maplibregl.Popup | null>(null);
+  const lastEditingAnnotationSentRef = useRef<{ id: string; text: string; size: number; rotation: number; coordinates: Position } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [showZoomHint, setShowZoomHint] = useState(true);
+  const editingAnnotationIdRef = useRef<string | null>(null);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
 
@@ -177,6 +180,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   useEffect(() => {
     activeToolRef.current = activeTool;
   }, [activeTool]);
+
+  useEffect(() => {
+    editingAnnotationIdRef.current = editingAnnotationId;
+  }, [editingAnnotationId]);
 
   useEffect(() => {
     if (!map.current) return;
@@ -207,13 +214,17 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     source?.setData(data);
   };
 
+  const closeAnnotationPopup = () => {
+    annotationPopupRef.current?.remove();
+    annotationPopupRef.current = null;
+  };
+
   const clearAllDrawings = () => {
     detourPointsRef.current = [];
     detourFeaturesRef.current = [];
     closedRoadFeaturesRef.current = [];
     closedSignsRef.current = [];
     actionHistoryRef.current = [];
-    annotationsDataHashRef.current = '';
     lastEditingAnnotationSentRef.current = null;
     setEditingAnnotationId(null);
     setAnnotations([]);
@@ -221,6 +232,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     updateSourceData('detour-road', emptyFeatureCollection());
     updateSourceData('closed-signs', emptyFeatureCollection());
     updateSourceData('annotations-source', emptyFeatureCollection());
+    closeAnnotationPopup();
   };
 
   const getRoadLabel = (properties: GeoJSON.GeoJsonProperties | null | undefined) => {
@@ -292,19 +304,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       properties: {
         id: annotation.id,
         text: annotation.text,
-        size: annotation.size
+        size: annotation.size,
+        rotation: annotation.rotation
       },
       geometry: {
         type: 'Point',
         coordinates: annotation.coordinates
       }
     }));
-    const nextData = {
+    updateSourceData('annotations-source', {
       type: 'FeatureCollection',
       features: annotationFeatures
-    } satisfies FeatureCollection;
-    annotationsDataHashRef.current = JSON.stringify(nextData);
-    updateSourceData('annotations-source', nextData);
+    });
   };
 
   const initializeMapLayers = (mapInstance: maplibregl.Map) => {
@@ -313,7 +324,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'closed-sign-layer',
       'detour-road-layer',
       'detour-road-casing-layer',
-      'closed-road-layer',
+      'closed-road-fill',
+      'closed-road-outline',
       'nvdb-hover-layer',
       'nvdb-hitbox',
       'nvdb-layer'
@@ -424,7 +436,17 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addLayer({
-      id: 'closed-road-layer',
+      id: 'closed-road-outline',
+      type: 'line',
+      source: 'closed-road',
+      paint: {
+        'line-color': SVV_COLORS.closedRoadOutline,
+        'line-width': 10
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'closed-road-fill',
       type: 'line',
       source: 'closed-road',
       paint: {
@@ -438,8 +460,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       type: 'line',
       source: 'detour-road',
       paint: {
-        'line-color': '#ffffff',
-        'line-width': 7,
+        'line-color': SVV_COLORS.detourOutline,
+        'line-width': 9,
         'line-opacity': 0.9
       }
     });
@@ -471,7 +493,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       source: 'annotations-source',
       layout: {
         'text-field': ['get', 'text'],
-        'text-size': ['coalesce', ['get', 'size'], 16],
+        'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+        'text-size': ['get', 'size'],
+        'text-rotate': ['get', 'rotation'],
         'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
         'text-radial-offset': 0.5,
         'text-justify': 'auto'
@@ -484,24 +508,44 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       }
     });
 
-    mapInstance.on('mouseenter', 'annotations-layer', () => {
-      mapInstance.getCanvas().style.cursor = 'grab';
-    });
-
-    mapInstance.on('mouseleave', 'annotations-layer', () => {
-      if (!draggingAnnotationIdRef.current) {
-        mapInstance.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
-      }
-    });
-
     mapInstance.on('mousedown', 'annotations-layer', (event) => {
       const feature = event.features?.[0] as GeoJSON.Feature<GeoJSON.Point> | undefined;
       const id = typeof feature?.properties?.id === 'string' ? feature.properties.id : null;
       if (!id) return;
+      skipNextMapClickRef.current = true;
       draggingAnnotationIdRef.current = id;
-      setEditingAnnotationId(id);
-      mapInstance.getCanvas().style.cursor = 'grabbing';
+      setEditingAnnotationId((prev) => (prev === id ? prev : id));
+      closeAnnotationPopup();
       mapInstance.dragPan.disable();
+      mapInstance.getCanvas().style.cursor = 'grabbing';
+    });
+
+    mapInstance.on('click', 'annotations-layer', (event) => {
+      const feature = event.features?.[0] as GeoJSON.Feature<GeoJSON.Point> | undefined;
+      const id = typeof feature?.properties?.id === 'string' ? feature.properties.id : null;
+      if (!id) return;
+      skipNextMapClickRef.current = true;
+      setEditingAnnotationId((prev) => (prev === id ? prev : id));
+    });
+
+    mapInstance.on('mousemove', (event) => {
+      if (!draggingAnnotationIdRef.current) return;
+      const draggedId = draggingAnnotationIdRef.current;
+      const coordinates: Position = [event.lngLat.lng, event.lngLat.lat];
+      setAnnotations((prev) =>
+        prev.map((annotation) =>
+          annotation.id === draggedId
+            ? { ...annotation, coordinates }
+            : annotation
+        )
+      );
+    });
+
+    mapInstance.on('mouseup', () => {
+      if (!draggingAnnotationIdRef.current) return;
+      draggingAnnotationIdRef.current = null;
+      mapInstance.dragPan.enable();
+      mapInstance.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
     });
 
     mapInstance.on('mouseleave', 'nvdb-hitbox', () => {
@@ -752,32 +796,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
     map.current.addControl(geocodingControl, 'top-left');
 
-    map.current.on('mousemove', (event) => {
-      if (!map.current) return;
-      if (!draggingAnnotationIdRef.current) return;
-      const draggedId = draggingAnnotationIdRef.current;
-      const newCoordinates: Position = [event.lngLat.lng, event.lngLat.lat];
-      setAnnotations((prev) =>
-        prev.map((annotation) =>
-          annotation.id === draggedId
-            ? { ...annotation, coordinates: newCoordinates }
-            : annotation
-        )
-      );
-    });
-
-    map.current.on('mouseup', () => {
-      if (!map.current) return;
-      if (!draggingAnnotationIdRef.current) return;
-      draggingAnnotationIdRef.current = null;
-      map.current.dragPan.enable();
-      map.current.getCanvas().style.cursor = 'grab';
-    });
-
     map.current.on('click', (event) => {
       if (skipNextMapClickRef.current) {
         skipNextMapClickRef.current = false;
         return;
+      }
+
+      if (editingAnnotationIdRef.current) {
+        setEditingAnnotationId(null);
       }
 
       const clickedPosition: Position = [event.lngLat.lng, event.lngLat.lat];
@@ -792,6 +818,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             id: newId,
             text: 'Ny tekst',
             size: 16,
+            rotation: 0,
             coordinates: clickedPosition
           }
         ]);
@@ -843,6 +870,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     return () => {
       if (moveDebounceRef.current) window.clearTimeout(moveDebounceRef.current);
+      closeAnnotationPopup();
       map.current?.removeControl(geocodingControl);
       map.current?.remove();
       map.current = null;
@@ -884,6 +912,160 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   }, [activeTool]);
 
   useEffect(() => {
+    if (!map.current) return;
+    if (!editingAnnotationId) {
+      closeAnnotationPopup();
+      return;
+    }
+
+    const selected = annotationsRef.current.find((annotation) => annotation.id === editingAnnotationId);
+    if (!selected) {
+      closeAnnotationPopup();
+      return;
+    }
+
+    const container = document.createElement('div');
+    container.style.minWidth = '230px';
+    container.style.backgroundColor = '#ffffff';
+    container.style.borderRadius = '12px';
+    container.style.boxShadow = '0 10px 25px rgba(15, 23, 42, 0.18)';
+    container.style.padding = '12px';
+    container.style.fontFamily = 'LFT Etica, Arial, sans-serif';
+    container.style.color = '#1f2937';
+
+    const textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.value = selected.text;
+    textInput.placeholder = 'Skriv tekst...';
+    textInput.style.width = '100%';
+    textInput.style.border = '1px solid #cbd5e1';
+    textInput.style.borderRadius = '8px';
+    textInput.style.padding = '8px 10px';
+    textInput.style.fontSize = '14px';
+    textInput.style.marginBottom = '10px';
+    textInput.style.outline = 'none';
+    textInput.style.fontFamily = 'LFT Etica, Arial, sans-serif';
+    textInput.addEventListener('input', () => {
+      const nextText = textInput.value;
+      setAnnotations((prev) =>
+        prev.map((annotation) =>
+          annotation.id === selected.id
+            ? { ...annotation, text: nextText }
+            : annotation
+        )
+      );
+    });
+    container.appendChild(textInput);
+
+    const sizeLabel = document.createElement('label');
+    sizeLabel.textContent = `Størrelse: ${selected.size}`;
+    sizeLabel.style.display = 'block';
+    sizeLabel.style.fontSize = '12px';
+    sizeLabel.style.marginBottom = '4px';
+    container.appendChild(sizeLabel);
+
+    const sizeInput = document.createElement('input');
+    sizeInput.type = 'range';
+    sizeInput.min = '10';
+    sizeInput.max = '40';
+    sizeInput.value = String(selected.size);
+    sizeInput.style.width = '100%';
+    sizeInput.style.marginBottom = '10px';
+    sizeInput.addEventListener('input', () => {
+      const nextSize = Number(sizeInput.value);
+      sizeLabel.textContent = `Størrelse: ${nextSize}`;
+      setAnnotations((prev) =>
+        prev.map((annotation) =>
+          annotation.id === selected.id
+            ? { ...annotation, size: nextSize }
+            : annotation
+        )
+      );
+    });
+    container.appendChild(sizeInput);
+
+    const rotationLabel = document.createElement('label');
+    rotationLabel.textContent = `Rotasjon: ${selected.rotation}°`;
+    rotationLabel.style.display = 'block';
+    rotationLabel.style.fontSize = '12px';
+    rotationLabel.style.marginBottom = '4px';
+    container.appendChild(rotationLabel);
+
+    const rotationInput = document.createElement('input');
+    rotationInput.type = 'range';
+    rotationInput.min = '0';
+    rotationInput.max = '360';
+    rotationInput.step = '5';
+    rotationInput.value = String(selected.rotation);
+    rotationInput.style.width = '100%';
+    rotationInput.style.marginBottom = '12px';
+    rotationInput.addEventListener('input', () => {
+      const nextRotation = Number(rotationInput.value);
+      rotationLabel.textContent = `Rotasjon: ${nextRotation}°`;
+      setAnnotations((prev) =>
+        prev.map((annotation) =>
+          annotation.id === selected.id
+            ? { ...annotation, rotation: nextRotation }
+            : annotation
+        )
+      );
+    });
+    container.appendChild(rotationInput);
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.justifyContent = 'space-between';
+    actions.style.gap = '8px';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = '🗑 Slett';
+    deleteBtn.style.flex = '1';
+    deleteBtn.style.border = '1px solid #fecaca';
+    deleteBtn.style.background = '#fff1f2';
+    deleteBtn.style.color = '#b91c1c';
+    deleteBtn.style.borderRadius = '8px';
+    deleteBtn.style.padding = '8px 10px';
+    deleteBtn.style.fontSize = '12px';
+    deleteBtn.style.fontWeight = '600';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.addEventListener('click', () => {
+      setAnnotations((prev) => prev.filter((annotation) => annotation.id !== selected.id));
+      setEditingAnnotationId(null);
+    });
+    actions.appendChild(deleteBtn);
+
+    const doneBtn = document.createElement('button');
+    doneBtn.type = 'button';
+    doneBtn.textContent = '✓ Ferdig';
+    doneBtn.style.flex = '1';
+    doneBtn.style.border = '1px solid #86efac';
+    doneBtn.style.background = '#dcfce7';
+    doneBtn.style.color = '#166534';
+    doneBtn.style.borderRadius = '8px';
+    doneBtn.style.padding = '8px 10px';
+    doneBtn.style.fontSize = '12px';
+    doneBtn.style.fontWeight = '600';
+    doneBtn.style.cursor = 'pointer';
+    doneBtn.addEventListener('click', () => {
+      setEditingAnnotationId(null);
+    });
+    actions.appendChild(doneBtn);
+
+    container.appendChild(actions);
+
+    closeAnnotationPopup();
+    annotationPopupRef.current = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 16
+    })
+      .setLngLat(selected.coordinates)
+      .setDOMContent(container)
+      .addTo(map.current);
+  }, [editingAnnotationId]);
+
+  useEffect(() => {
     if (!editingAnnotationId) {
       lastEditingAnnotationSentRef.current = null;
       onEditingAnnotationChange(null);
@@ -898,14 +1080,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     const next = {
       id: selected.id,
       text: selected.text,
-      size: selected.size
+      size: selected.size,
+      rotation: selected.rotation,
+      coordinates: selected.coordinates
     };
     const last = lastEditingAnnotationSentRef.current;
     if (
       last &&
       last.id === next.id &&
       last.text === next.text &&
-      last.size === next.size
+      last.size === next.size &&
+      last.rotation === next.rotation &&
+      last.coordinates[0] === next.coordinates[0] &&
+      last.coordinates[1] === next.coordinates[1]
     ) {
       return;
     }
@@ -921,49 +1108,52 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         if (annotation.id !== editingAnnotation.id) return annotation;
         if (
           annotation.text === editingAnnotation.text &&
-          annotation.size === editingAnnotation.size
+          annotation.size === editingAnnotation.size &&
+          annotation.rotation === editingAnnotation.rotation &&
+          annotation.coordinates[0] === editingAnnotation.coordinates[0] &&
+          annotation.coordinates[1] === editingAnnotation.coordinates[1]
         ) {
           return annotation;
         }
         changed = true;
-        return { ...annotation, text: editingAnnotation.text, size: editingAnnotation.size };
+        return {
+          ...annotation,
+          text: editingAnnotation.text,
+          size: editingAnnotation.size,
+          rotation: editingAnnotation.rotation,
+          coordinates: editingAnnotation.coordinates
+        };
       });
       return changed ? next : prev;
     });
   }, [editingAnnotation]);
 
   useEffect(() => {
-    if (!editingAnnotationId) return;
-    if (!onDeleteEditingAnnotation) return;
-    setAnnotations((prev) => prev.filter((annotation) => annotation.id !== editingAnnotationId));
-    setEditingAnnotationId(null);
-  }, [onDeleteEditingAnnotation, editingAnnotationId]);
-
-  useEffect(() => {
     if (!map.current) return;
-
     const annotationFeatures: GeoJSON.Feature<GeoJSON.Point>[] = annotations.map((annotation) => ({
       type: 'Feature',
       properties: {
         id: annotation.id,
         text: annotation.text,
-        size: annotation.size
+        size: annotation.size,
+        rotation: annotation.rotation
       },
       geometry: {
         type: 'Point',
         coordinates: annotation.coordinates
       }
     }));
-
-    const nextData = {
+    updateSourceData('annotations-source', {
       type: 'FeatureCollection',
       features: annotationFeatures
-    } satisfies FeatureCollection;
-
-    const nextHash = JSON.stringify(nextData);
-    if (nextHash === annotationsDataHashRef.current) return;
-    annotationsDataHashRef.current = nextHash;
-    updateSourceData('annotations-source', nextData);
+    });
+    if (!editingAnnotationId) return;
+    const selected = annotations.find((annotation) => annotation.id === editingAnnotationId);
+    if (!selected) {
+      setEditingAnnotationId(null);
+      return;
+    }
+    annotationPopupRef.current?.setLngLat(selected.coordinates);
   }, [annotations]);
 
   return (

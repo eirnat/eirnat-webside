@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "LFT Etica";
+  src: url("/fonts/LFTEtica-Semibold.otf") format("opentype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --background: #f6f1e9;
   --foreground: #2b2d42;
