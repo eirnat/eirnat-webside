@@ -231,8 +231,12 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
   }
 
   const objects =
-    payload && typeof payload === 'object' && 'objekter' in payload
-      ? ((payload as { objekter?: unknown[] }).objekter ?? [])
+    payload && typeof payload === 'object'
+      ? (
+          (payload as { objekter?: unknown[]; veglenkesekvenser?: unknown[] }).objekter ??
+          (payload as { objekter?: unknown[]; veglenkesekvenser?: unknown[] }).veglenkesekvenser ??
+          []
+        )
       : [];
 
   const features: GeoJSON.Feature[] = [];
@@ -287,6 +291,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const detourFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const closedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const reducedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
+  const roadCacheRef = useRef<Map<string, GeoJSON.Feature<GeoJSON.LineString>>>(new Map());
+  const isFetchingRef = useRef(false);
   /** Manuelt plasserte skilt (no-entry), i kartets lng/lat */
   const closedSignsRef = useRef<SignPlacement[]>([]);
   const lastFetchedBboxRef = useRef<string | null>(null);
@@ -728,6 +734,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     syncClosedSources();
     syncReducedSource();
     syncDetourSource();
+    if (roadCacheRef.current.size > 0) {
+      updateSourceData('nvdb-source', {
+        type: 'FeatureCollection',
+        features: Array.from(roadCacheRef.current.values())
+      });
+    }
     const annotationFeatures: GeoJSON.Feature<GeoJSON.Point>[] = annotationsRef.current.map((annotation) => ({
       type: 'Feature',
       properties: {
@@ -1240,51 +1252,71 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
   const fetchNvdbRoadNetwork = async () => {
     if (!map.current) return;
-
-    const zoom = map.current.getZoom();
-    setShowZoomHint(zoom < NVDB_MIN_ZOOM);
-
-    if (zoom < NVDB_MIN_ZOOM) {
-      updateSourceData('nvdb-source', emptyFeatureCollection());
-      lastFetchedBboxRef.current = null;
-      return;
-    }
-
-    const bounds = map.current.getBounds();
-    const bbox = [
-      bounds.getWest().toFixed(5),
-      bounds.getSouth().toFixed(5),
-      bounds.getEast().toFixed(5),
-      bounds.getNorth().toFixed(5)
-    ].join(',');
-
-    if (bbox === lastFetchedBboxRef.current) return;
-    lastFetchedBboxRef.current = bbox;
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
 
     try {
-      console.log('Henter NVDB for BBOX:', bbox);
-      const response = await fetch(`/api/nvdb/vegnett?bbox=${encodeURIComponent(bbox)}`);
-      if (!response.ok) return;
+      const zoom = map.current.getZoom();
+      setShowZoomHint(zoom < NVDB_MIN_ZOOM);
+      if (zoom < NVDB_MIN_ZOOM) {
+        updateSourceData('nvdb-source', emptyFeatureCollection());
+        lastFetchedBboxRef.current = null;
+        return;
+      }
 
-      const payload = (await response.json()) as unknown;
+      const bounds = map.current.getBounds();
+      const bbox = [
+        bounds.getWest().toFixed(5),
+        bounds.getSouth().toFixed(5),
+        bounds.getEast().toFixed(5),
+        bounds.getNorth().toFixed(5)
+      ].join(',');
+      if (bbox === lastFetchedBboxRef.current) return;
+      lastFetchedBboxRef.current = bbox;
+
+      const url = `https://nvdbapiles.atlas.vegvesen.no/vegnett/veglenkesekvenser/segmentert?kartutsnitt=${bbox}&srid=4326&antall=1500`;
+      const response = await fetch(url, {
+        headers: {
+          'X-Client': 'eirnat-kartverktøy-frontend',
+          'Accept': 'application/vnd.vegvesen.nvdb-v4+json'
+        }
+      });
+
+      if (!response.ok) return;
+      const payload = await response.json();
       const data = toGeoJsonFeatureCollection(payload);
-      const correctedData: FeatureCollection = {
-        ...data,
-        features: data.features.map((feature) => ({
+
+      let addedAny = false;
+      data.features.forEach((feature) => {
+        if (feature.geometry.type !== 'LineString') return;
+        const props = (feature.properties as Record<string, unknown> | null | undefined) ?? {};
+        const roadId = `${String(props.veglenkesekvensid ?? feature.id ?? 'unknown')}_${String(props.startposisjon ?? '0')}`;
+        if (roadCacheRef.current.has(roadId)) return;
+
+        addedAny = true;
+        const correctedFeature: GeoJSON.Feature<GeoJSON.LineString> = {
           ...feature,
-          geometry: feature.geometry.type === 'LineString'
-            ? {
-                ...feature.geometry,
-                coordinates: feature.geometry.coordinates.map((coord) => [coord[1], coord[0]])
-              }
-            : feature.geometry
-        }))
-      };
-      console.log('Antall veglenker mottatt:', data.features.length);
-      console.log('Første veglenke geometri:', correctedData.features?.[0]?.geometry);
-      updateSourceData('nvdb-source', correctedData);
-    } catch {
-      // Ignorer nettverksfeil og behold forrige kartdata
+          geometry: {
+            ...feature.geometry,
+            coordinates: feature.geometry.coordinates.map((coordinate) => {
+              const pair = coordinate as [number, number];
+              return [pair[1], pair[0]];
+            })
+          }
+        };
+        roadCacheRef.current.set(roadId, correctedFeature);
+      });
+
+      if (addedAny) {
+        updateSourceData('nvdb-source', {
+          type: 'FeatureCollection',
+          features: Array.from(roadCacheRef.current.values())
+        });
+      }
+    } catch (error) {
+      console.error('Frontend NVDB feil:', error);
+    } finally {
+      isFetchingRef.current = false;
     }
   };
 
@@ -2015,10 +2047,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       void fetchNvdbRoadNetwork();
     });
 
-    map.current.on('move', () => {
-      void fetchNvdbRoadNetwork();
-    });
-
     map.current.on('moveend', () => {
       if (moveDebounceRef.current) window.clearTimeout(moveDebounceRef.current);
       moveDebounceRef.current = window.setTimeout(() => {
@@ -2049,7 +2077,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     const instance = map.current;
     const url = buildMapTilerStyleUrl(mapStyle);
-    lastFetchedBboxRef.current = null;
 
     styleLoadGenerationRef.current += 1;
     const generation = styleLoadGenerationRef.current;
