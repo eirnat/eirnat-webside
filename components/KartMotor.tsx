@@ -38,6 +38,8 @@ type KartMotorProps = {
 
   export type KartMotorHandle = {
   downloadAsPng: () => void;
+  exportMapData: () => void;
+  openProject: () => void;
 };
 
 type Position = [number, number];
@@ -58,8 +60,35 @@ type LegendRow = {
   casingColor: string;
   mainColor: string;
 };
+type ActionCategory =
+  | 'closed-segment'
+  | 'reduced-segment'
+  | 'closed-sign'
+  | 'detour-segment'
+  | 'detour-point'
+  | 'annotation';
+type ActionHistoryItem =
+  | { type: 'add'; category: ActionCategory }
+  | { type: 'delete'; category: 'closed-sign'; data: SignPlacement }
+  | { type: 'delete'; category: 'closed-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
+  | { type: 'delete'; category: 'reduced-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
+  | { type: 'delete'; category: 'detour-segment'; data: GeoJSON.Feature<GeoJSON.LineString> };
 
 type FeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry>;
+type MapProjectData = {
+  version: 1;
+  savedAt: string;
+  view: {
+    center: Position;
+    zoom: number;
+  } | null;
+  closedSigns: SignPlacement[];
+  closedRoadFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
+  reducedRoadFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
+  detourFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
+  detourPoints: Position[];
+  annotations: Annotation[];
+};
 
 const emptyFeatureCollection = (): FeatureCollection => ({
   type: 'FeatureCollection',
@@ -251,6 +280,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   ref
 ) {
   const mapContainer = useRef<HTMLDivElement>(null);
+  const projectFileInputRef = useRef<HTMLInputElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const activeToolRef = useRef<ActiveTool>('none');
   const detourPointsRef = useRef<Position[]>([]);
@@ -262,9 +292,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const lastFetchedBboxRef = useRef<string | null>(null);
   const moveDebounceRef = useRef<number | null>(null);
   const skipNextMapClickRef = useRef(false);
-  const actionHistoryRef = useRef<
-    Array<'closed-segment' | 'reduced-segment' | 'closed-sign' | 'detour-segment' | 'detour-point' | 'annotation'>
-  >([]);
+  const actionHistoryRef = useRef<ActionHistoryItem[]>([]);
   const draggingAnnotationIdRef = useRef<string | null>(null);
   const markersRef = useRef<Record<string, maplibregl.Marker>>({});
   const annotationPopupRef = useRef<maplibregl.Popup | null>(null);
@@ -296,6 +324,27 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   useEffect(() => {
     activeToolRef.current = activeTool;
   }, [activeTool]);
+
+  useEffect(() => {
+    const styleId = 'kartmotor-popup-zindex-style';
+    if (document.getElementById(styleId)) return;
+    const styleEl = document.createElement('style');
+    styleEl.id = styleId;
+    styleEl.textContent = `
+      .maplibregl-popup {
+        z-index: 9999 !important;
+        pointer-events: auto;
+      }
+      .maplibregl-popup-content {
+        pointer-events: auto;
+      }
+    `;
+    document.head.appendChild(styleEl);
+
+    return () => {
+      styleEl.remove();
+    };
+  }, []);
 
   useEffect(() => {
     mapStyleRef.current = mapStyle;
@@ -396,6 +445,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (markerMap[annotation.id]) continue;
       let dragOccurred = false;
       const box = document.createElement('div');
+      box.dataset.annotationId = annotation.id;
+      box.style.position = 'relative';
       const wrapTextLines = (text: string, maxCharsPerLine = 30): string[] => {
         const paragraphs = text.split('\n');
         const wrapped: string[] = [];
@@ -420,13 +471,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         return wrapped.length > 0 ? wrapped : [''];
       };
       const wrappedLines = wrapTextLines(annotation.text, 30);
+      const textBody = document.createElement('div');
+      textBody.dataset.role = 'annotation-text-body';
+      textBody.textContent = wrappedLines.join('\n');
+      textBody.style.whiteSpace = 'pre-wrap';
+      textBody.style.textAlign = 'center';
+      textBody.style.lineHeight = '1';
+      textBody.style.width = '100%';
+      textBody.style.height = '100%';
+
       box.style.display = 'flex';
       box.style.alignItems = 'center';
       box.style.justifyContent = 'center';
-      box.style.whiteSpace = 'pre-wrap';
       box.style.maxWidth = `${Math.max(250, annotation.size * 15)}px`;
-      box.style.textAlign = 'center';
-      box.style.lineHeight = '1';
       box.style.background = 'transparent';
       box.style.border = 'none';
       box.style.borderRadius = '0';
@@ -437,12 +494,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       box.style.width = 'fit-content';
       box.style.height = 'fit-content';
       box.style.zIndex = '100';
-      box.textContent = wrappedLines.join('\n');
+      box.appendChild(textBody);
 
       const marker = new maplibregl.Marker({
         element: box,
         draggable: true,
-        anchor: 'center'
+        anchor: 'center',
+        rotationAlignment: 'viewport',
+        rotation: annotation.rotation
       })
         .setLngLat(annotation.coordinates)
         .addTo(map.current);
@@ -527,14 +586,15 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       const marker = markersRef.current[annotation.id];
       if (!marker) continue;
       const box = marker.getElement();
-      box.textContent = wrapTextLines(annotation.text, 30).join('\n');
+      const textBody = box.querySelector('[data-role="annotation-text-body"]') as HTMLDivElement | null;
+      if (textBody) {
+        textBody.textContent = wrapTextLines(annotation.text, 30).join('\n');
+      }
       box.style.fontSize = `${annotation.size}px`;
       box.style.fontFamily = 'Arial, sans-serif';
       box.style.fontWeight = annotation.backgroundStyle === 'white' ? 'normal' : 'bold';
-      box.style.whiteSpace = 'pre-wrap';
       box.style.maxWidth = `${Math.max(250, annotation.size * 15)}px`;
-      box.style.transform = `rotate(${annotation.rotation}deg)`;
-      box.style.transformOrigin = 'center center';
+      marker.setRotation(annotation.rotation);
       if (annotation.backgroundStyle === 'white') {
         box.style.background = '#ffffff';
         box.style.border = '2px solid #000000';
@@ -1109,44 +1169,72 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     const lastAction = actionHistoryRef.current.pop();
     if (!lastAction) return;
 
-    if (lastAction === 'closed-segment') {
-      closedRoadFeaturesRef.current = closedRoadFeaturesRef.current.slice(0, -1);
-      syncClosedSources();
-      return;
+    if (lastAction.type === 'add') {
+      if (lastAction.category === 'closed-segment') {
+        closedRoadFeaturesRef.current = closedRoadFeaturesRef.current.slice(0, -1);
+        syncClosedSources();
+        return;
+      }
+
+      if (lastAction.category === 'closed-sign') {
+        closedSignsRef.current = closedSignsRef.current.slice(0, -1);
+        syncClosedSources();
+        return;
+      }
+
+      if (lastAction.category === 'detour-segment') {
+        detourFeaturesRef.current = detourFeaturesRef.current.slice(0, -1);
+        syncDetourSource();
+        return;
+      }
+
+      if (lastAction.category === 'detour-point') {
+        detourPointsRef.current = detourPointsRef.current.slice(0, -1);
+        syncDetourSource();
+        return;
+      }
+
+      if (lastAction.category === 'reduced-segment') {
+        reducedRoadFeaturesRef.current = reducedRoadFeaturesRef.current.slice(0, -1);
+        syncReducedSource();
+        return;
+      }
+
+      if (lastAction.category === 'annotation') {
+        setAnnotations((prev) => {
+          const next = prev.slice(0, -1);
+          if (editingAnnotationId && !next.some((item) => item.id === editingAnnotationId)) {
+            setEditingAnnotationId(null);
+          }
+          return next;
+        });
+        return;
+      }
     }
 
-    if (lastAction === 'closed-sign') {
-      closedSignsRef.current = closedSignsRef.current.slice(0, -1);
-      syncClosedSources();
-      return;
-    }
+    if (lastAction.type === 'delete') {
+      if (lastAction.category === 'closed-sign') {
+        closedSignsRef.current = [...closedSignsRef.current, lastAction.data];
+        syncClosedSources();
+        return;
+      }
 
-    if (lastAction === 'detour-segment') {
-      detourFeaturesRef.current = detourFeaturesRef.current.slice(0, -1);
-      syncDetourSource();
-      return;
-    }
+      if (lastAction.category === 'closed-segment') {
+        closedRoadFeaturesRef.current = [...closedRoadFeaturesRef.current, lastAction.data];
+        syncClosedSources();
+        return;
+      }
 
-    if (lastAction === 'detour-point') {
-      detourPointsRef.current = detourPointsRef.current.slice(0, -1);
-      syncDetourSource();
-      return;
-    }
+      if (lastAction.category === 'reduced-segment') {
+        reducedRoadFeaturesRef.current = [...reducedRoadFeaturesRef.current, lastAction.data];
+        syncReducedSource();
+        return;
+      }
 
-    if (lastAction === 'reduced-segment') {
-      reducedRoadFeaturesRef.current = reducedRoadFeaturesRef.current.slice(0, -1);
-      syncReducedSource();
-      return;
-    }
-
-    if (lastAction === 'annotation') {
-      setAnnotations((prev) => {
-        const next = prev.slice(0, -1);
-        if (editingAnnotationId && !next.some((item) => item.id === editingAnnotationId)) {
-          setEditingAnnotationId(null);
-        }
-        return next;
-      });
+      if (lastAction.category === 'detour-segment') {
+        detourFeaturesRef.current = [...detourFeaturesRef.current, lastAction.data];
+        syncDetourSource();
+      }
     }
   };
 
@@ -1198,6 +1286,185 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     } catch {
       // Ignorer nettverksfeil og behold forrige kartdata
     }
+  };
+
+  const isPosition = (value: unknown): value is Position => {
+    return (
+      Array.isArray(value) &&
+      value.length >= 2 &&
+      Number.isFinite(Number(value[0])) &&
+      Number.isFinite(Number(value[1]))
+    );
+  };
+
+  const normalizeLineFeatures = (
+    value: unknown,
+    kind: 'closed-road' | 'reduced-road' | 'detour-road'
+  ): GeoJSON.Feature<GeoJSON.LineString>[] => {
+    if (!Array.isArray(value)) return [];
+    const normalized: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+
+    for (const item of value) {
+      const feature = item as {
+        type?: string;
+        properties?: Record<string, unknown> | null;
+        geometry?: { type?: string; coordinates?: unknown[] };
+      };
+      if (feature?.type !== 'Feature') continue;
+      if (feature.geometry?.type !== 'LineString' || !Array.isArray(feature.geometry.coordinates)) continue;
+
+      const coordinates = feature.geometry.coordinates
+        .filter((coordinate): coordinate is Position => isPosition(coordinate))
+        .map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])] as Position);
+      if (coordinates.length < 2) continue;
+
+      const properties = feature.properties && typeof feature.properties === 'object'
+        ? feature.properties
+        : {};
+
+      normalized.push({
+        type: 'Feature',
+        properties: {
+          ...properties,
+          kind,
+          uuid:
+            typeof properties.uuid === 'string' && properties.uuid.length > 0
+              ? properties.uuid
+              : crypto.randomUUID()
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates
+        }
+      });
+    }
+    return normalized;
+  };
+
+  const normalizeSigns = (value: unknown): SignPlacement[] => {
+    if (!Array.isArray(value)) return [];
+    const validKinds: SignKind[] = ['stengt-skilt', 'lyskryss-skilt', 'veiarbeid-skilt', 'ko-skilt'];
+    return value.flatMap((item) => {
+      const sign = item as { id?: unknown; coordinates?: unknown; kind?: unknown };
+      if (!isPosition(sign?.coordinates)) return [];
+      if (typeof sign?.kind !== 'string' || !validKinds.includes(sign.kind as SignKind)) return [];
+      return [{
+        id: typeof sign.id === 'string' && sign.id.length > 0 ? sign.id : crypto.randomUUID(),
+        coordinates: [Number(sign.coordinates[0]), Number(sign.coordinates[1])] as Position,
+        kind: sign.kind as SignKind
+      }];
+    });
+  };
+
+  const normalizeAnnotations = (value: unknown): Annotation[] => {
+    if (!Array.isArray(value)) return [];
+    const validStyles: AnnotationBackgroundStyle[] = ['none', 'white', 'green'];
+    return value.flatMap((item) => {
+      const annotation = item as Partial<Annotation>;
+      if (typeof annotation?.text !== 'string') return [];
+      if (!isPosition(annotation.coordinates)) return [];
+      const rawSize = Number(annotation.size);
+      const size = Number.isFinite(rawSize) ? rawSize : 25;
+      const rotation = Number(annotation.rotation);
+      if (!Number.isFinite(rotation)) return [];
+      const backgroundStyle =
+        typeof annotation.backgroundStyle === 'string' && validStyles.includes(annotation.backgroundStyle)
+          ? annotation.backgroundStyle
+          : 'white';
+
+      return [{
+        id: typeof annotation.id === 'string' && annotation.id.length > 0 ? annotation.id : crypto.randomUUID(),
+        text: annotation.text,
+        size,
+        rotation,
+        coordinates: [Number(annotation.coordinates[0]), Number(annotation.coordinates[1])] as Position,
+        backgroundStyle
+      }];
+    });
+  };
+
+  const normalizeDetourPoints = (value: unknown): Position[] => {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((point): point is Position => isPosition(point))
+      .map((point) => [Number(point[0]), Number(point[1])] as Position);
+  };
+
+  const exportMapData = () => {
+    const mapInstance = map.current;
+    const center = mapInstance?.getCenter();
+    const projectData: MapProjectData = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      view: center
+        ? {
+            center: [center.lng, center.lat],
+            zoom: mapInstance?.getZoom() ?? 9.5
+          }
+        : null,
+      closedSigns: closedSignsRef.current,
+      closedRoadFeatures: closedRoadFeaturesRef.current,
+      reducedRoadFeatures: reducedRoadFeaturesRef.current,
+      detourFeatures: detourFeaturesRef.current,
+      detourPoints: detourPointsRef.current,
+      annotations: annotationsRef.current
+    };
+
+    const fileDate = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = `veiarbeidskart_${fileDate}.json`;
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const importMapData = async (file: File) => {
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as Partial<MapProjectData> & Record<string, unknown>;
+
+      const nextClosedSigns = normalizeSigns(parsed.closedSigns);
+      const nextClosedRoadFeatures = normalizeLineFeatures(parsed.closedRoadFeatures, 'closed-road');
+      const nextReducedRoadFeatures = normalizeLineFeatures(parsed.reducedRoadFeatures, 'reduced-road');
+      const nextDetourFeatures = normalizeLineFeatures(parsed.detourFeatures, 'detour-road');
+      const nextDetourPoints = normalizeDetourPoints(parsed.detourPoints);
+      const nextAnnotations = normalizeAnnotations(parsed.annotations);
+
+      closedSignsRef.current = nextClosedSigns;
+      closedRoadFeaturesRef.current = nextClosedRoadFeatures;
+      reducedRoadFeaturesRef.current = nextReducedRoadFeatures;
+      detourFeaturesRef.current = nextDetourFeatures;
+      detourPointsRef.current = nextDetourPoints;
+      actionHistoryRef.current = [];
+      lastEditingAnnotationSentRef.current = null;
+      setEditingAnnotationId(null);
+      onEditingAnnotationChange(null);
+      setAnnotations(nextAnnotations);
+
+      syncClosedSources();
+      syncReducedSource();
+      syncDetourSource();
+
+      const view = parsed.view as { center?: unknown; zoom?: unknown } | undefined;
+      if (view && isPosition(view.center) && Number.isFinite(Number(view.zoom)) && map.current) {
+        map.current.flyTo({
+          center: [Number(view.center[0]), Number(view.center[1])],
+          zoom: Number(view.zoom),
+          essential: true
+        });
+      }
+    } catch {
+      window.alert('Klarte ikke å åpne prosjektfilen. Kontroller at filen er gyldig JSON.');
+    }
+  };
+
+  const handleProjectFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    void importMapData(file);
+    event.target.value = '';
   };
 
   useImperativeHandle(ref, () => ({
@@ -1383,11 +1650,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               ctx.restore();
             }
 
-            const hasClosedLegend =
-              closedRoadFeaturesRef.current.length > 0 || closedSignsRef.current.length > 0;
+            const hasClosedLegend = closedRoadFeaturesRef.current.length > 0;
             const hasReducedLegend = reducedRoadFeaturesRef.current.length > 0;
-            const hasDetourLegend =
-              detourFeaturesRef.current.length > 0 || detourPointsRef.current.length > 0;
+            const hasDetourLegend = detourFeaturesRef.current.length > 0;
             const activeLegendRows = getActiveLegendRows(
               hasClosedLegend,
               hasReducedLegend,
@@ -1396,10 +1661,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
             if (showLegend && activeLegendRows.length > 0) {
               const boxX = 16 * dpr;
-              const boxW = 330 * dpr;
-              const legendTopInset = 18 * dpr;
-              const legendBottomInset = 18 * dpr;
-              const legendRowSpacing = 32 * dpr;
+              const boxW = 380 * dpr;
+              const legendTopInset = 20 * dpr;
+              const legendBottomInset = 20 * dpr;
+              const legendRowSpacing = 36 * dpr;
               const boxH =
                 legendTopInset +
                 legendBottomInset +
@@ -1441,7 +1706,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
               ctx.fillStyle = '#111827';
               // Større, fet legend-tekst for bedre lesbarhet i nedskalerte bilder.
-              ctx.font = `bold ${16 * dpr}px Arial, sans-serif`;
+              ctx.font = `bold ${18 * dpr}px Arial, sans-serif`;
               ctx.textAlign = 'left';
               ctx.textBaseline = 'middle';
               activeLegendRows.forEach((row, index) => {
@@ -1455,7 +1720,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             const dataUrl = exportCanvas.toDataURL('image/png');
             const link = document.createElement('a');
             link.href = dataUrl;
-            link.download = 'vegmelding_utsnitt.png';
+            link.download = `veiarbeidskart_${new Date().toISOString().slice(0, 10)}.png`;
             link.click();
           } finally {
             restoreNvdbExportLayers();
@@ -1481,6 +1746,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           scheduleCapture();
         }, 200);
       })();
+    },
+    exportMapData,
+    openProject: () => {
+      projectFileInputRef.current?.click();
     }
   }));
 
@@ -1491,8 +1760,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     const mapOptions = {
       container: mapContainer.current,
       style: initialStyleUrl,
-      center: [8.5, 61.5], // Mer sentralt startpunkt for Sor-Norge
-      zoom: 7.5,
+      center: [5.32, 60.39], // Bergen
+      zoom: 9.5,
       preserveDrawingBuffer: true,
       crossOrigin: 'anonymous',
       canvasContextAttributes: {
@@ -1541,6 +1810,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         if (layerId === 'closed-sign-layer') {
           const targetId = typeof properties.id === 'string' ? properties.id : null;
           if (targetId) {
+            const deletedSign = closedSignsRef.current.find((sign) => sign.id === targetId);
+            if (deletedSign) {
+              actionHistoryRef.current.push({ type: 'delete', category: 'closed-sign', data: deletedSign });
+            }
             closedSignsRef.current = closedSignsRef.current.filter((sign) => sign.id !== targetId);
             syncClosedSources();
           }
@@ -1548,16 +1821,46 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           const targetUuid = typeof properties.uuid === 'string' ? properties.uuid : null;
           if (targetUuid) {
             if (layerId === 'closed-road-fill') {
+              const deletedSegment = closedRoadFeaturesRef.current.find(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid === targetUuid
+              );
+              if (deletedSegment) {
+                actionHistoryRef.current.push({
+                  type: 'delete',
+                  category: 'closed-segment',
+                  data: deletedSegment
+                });
+              }
               closedRoadFeaturesRef.current = closedRoadFeaturesRef.current.filter(
                 (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
               );
               syncClosedSources();
             } else if (layerId === 'reduced-road-fill') {
+              const deletedSegment = reducedRoadFeaturesRef.current.find(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid === targetUuid
+              );
+              if (deletedSegment) {
+                actionHistoryRef.current.push({
+                  type: 'delete',
+                  category: 'reduced-segment',
+                  data: deletedSegment
+                });
+              }
               reducedRoadFeaturesRef.current = reducedRoadFeaturesRef.current.filter(
                 (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
               );
               syncReducedSource();
             } else if (layerId === 'detour-road-layer') {
+              const deletedSegment = detourFeaturesRef.current.find(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid === targetUuid
+              );
+              if (deletedSegment) {
+                actionHistoryRef.current.push({
+                  type: 'delete',
+                  category: 'detour-segment',
+                  data: deletedSegment
+                });
+              }
               detourFeaturesRef.current = detourFeaturesRef.current.filter(
                 (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
               );
@@ -1599,7 +1902,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               geometry: { type: 'LineString', coordinates }
             }
           ];
-          actionHistoryRef.current.push('closed-segment');
+          actionHistoryRef.current.push({ type: 'add', category: 'closed-segment' });
           syncClosedSources();
           return;
         }
@@ -1613,7 +1916,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               geometry: { type: 'LineString', coordinates }
             }
           ];
-          actionHistoryRef.current.push('reduced-segment');
+          actionHistoryRef.current.push({ type: 'add', category: 'reduced-segment' });
           syncReducedSource();
           return;
         }
@@ -1626,7 +1929,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             geometry: { type: 'LineString', coordinates }
           }
         ];
-        actionHistoryRef.current.push('detour-segment');
+        actionHistoryRef.current.push({ type: 'add', category: 'detour-segment' });
         syncDetourSource();
         return;
       }
@@ -1637,13 +1940,13 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
       if (activeToolRef.current === 'text') {
         const newId = crypto.randomUUID();
-        actionHistoryRef.current.push('annotation');
+        actionHistoryRef.current.push({ type: 'add', category: 'annotation' });
         setAnnotations((prev) => [
           ...prev,
           {
             id: newId,
             text: 'Ny tekst',
-            size: 16,
+            size: 25,
             rotation: 0,
             coordinates: clickedPosition,
             backgroundStyle: 'white'
@@ -1669,14 +1972,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           ...closedSignsRef.current,
           { id: crypto.randomUUID(), coordinates: clickedPosition, kind: selectedIcon }
         ];
-        actionHistoryRef.current.push('closed-sign');
+        actionHistoryRef.current.push({ type: 'add', category: 'closed-sign' });
         syncClosedSources();
         return;
       }
 
       if (activeToolRef.current === 'detour') {
         detourPointsRef.current = [...detourPointsRef.current, clickedPosition];
-        actionHistoryRef.current.push('detour-point');
+        actionHistoryRef.current.push({ type: 'add', category: 'detour-point' });
         syncDetourSource();
       }
     });
@@ -1788,6 +2091,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     container.style.padding = '12px';
     container.style.fontFamily = 'Arial, sans-serif';
     container.style.color = '#1f2937';
+    container.style.pointerEvents = 'auto';
     container.addEventListener('mousedown', (event) => event.stopPropagation());
     container.addEventListener('click', (event) => event.stopPropagation());
     container.addEventListener('wheel', (event) => event.stopPropagation());
@@ -1966,6 +2270,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       .setLngLat(selected.coordinates)
       .setDOMContent(container)
       .addTo(map.current);
+    const popupElement = annotationPopupRef.current.getElement();
+    popupElement.style.zIndex = '9999';
+    popupElement.style.pointerEvents = 'auto';
     window.requestAnimationFrame(() => {
       textInput.focus();
       textInput.select();
@@ -2077,24 +2384,31 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   }, [annotations]);
 
   const activeLegendRows = useMemo(() => {
-    const hasClosed = closedRoadFeaturesRef.current.length > 0 || closedSignsRef.current.length > 0;
+    const hasClosed = closedRoadFeaturesRef.current.length > 0;
     const hasReduced = reducedRoadFeaturesRef.current.length > 0;
-    const hasDetour = detourFeaturesRef.current.length > 0 || detourPointsRef.current.length > 0;
+    const hasDetour = detourFeaturesRef.current.length > 0;
     return getActiveLegendRows(hasClosed, hasReduced, hasDetour);
   }, [legendRenderVersion]);
 
   return (
     <div className="relative h-full w-full">
+      <input
+        ref={projectFileInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={handleProjectFileSelected}
+      />
       <div ref={mapContainer} className="h-full w-full" />
       {showLegend && activeLegendRows.length > 0 && (
         <div
-          className="absolute bottom-10 left-4 w-[330px] rounded-md border-2 border-black bg-white p-2 shadow-lg"
+          className="absolute bottom-10 left-4 w-[380px] rounded-md border-2 border-black bg-white p-2 shadow-lg"
           style={{ fontFamily: 'Arial, sans-serif' }}
         >
           {activeLegendRows.map((row, index) => (
             <div
               key={row.id}
-              className={`${index === 0 ? '' : 'mt-1.5 '}flex items-center gap-1.5 text-[16px] font-bold text-slate-800`}
+              className={`${index === 0 ? '' : 'mt-2 '}flex items-center gap-2 text-[18px] font-bold text-slate-800`}
             >
               <div className="relative h-2.5 w-16">
                 <span

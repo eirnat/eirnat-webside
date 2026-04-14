@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { AlertTriangle, Download, GitBranch, List, RotateCcw, Slash, Type } from "lucide-react";
+import { AlertTriangle, Download, FolderOpen, GitBranch, List, RotateCcw, Save, Slash, Type } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ActiveTool, type AnnotationBackgroundStyle, type KartMotorHandle } from "@/components/KartMotor";
 
@@ -330,6 +330,24 @@ export default function LagKartPage() {
               <Download className="h-5 w-5 shrink-0" />
               Last ned kartbilde (PNG)
             </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => mapRef.current?.exportMapData()}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100 active:scale-[0.98]"
+              >
+                <Save className="h-4 w-4 shrink-0" />
+                Lagre prosjekt
+              </button>
+              <button
+                type="button"
+                onClick={() => mapRef.current?.openProject()}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100 active:scale-[0.98]"
+              >
+                <FolderOpen className="h-4 w-4 shrink-0" />
+                Åpne prosjekt
+              </button>
+            </div>
 
             <div className="border-t border-slate-200 pt-4 text-[10px] uppercase tracking-wider text-slate-400">
               <div>Utviklet av Eirik Natlandsmyr</div>
@@ -545,6 +563,24 @@ export default function LagKartPage() {
               <Download className="h-5 w-5 shrink-0" />
               Last ned kartbilde (PNG)
             </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => mapRef.current?.exportMapData()}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100 active:scale-[0.98]"
+              >
+                <Save className="h-4 w-4 shrink-0" />
+                Lagre prosjekt
+              </button>
+              <button
+                type="button"
+                onClick={() => mapRef.current?.openProject()}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-100 active:scale-[0.98]"
+              >
+                <FolderOpen className="h-4 w-4 shrink-0" />
+                Åpne prosjekt
+              </button>
+            </div>
 
             <div className="border-t border-slate-200 pt-3 text-[10px] uppercase tracking-wider text-slate-400">
               <div>Utviklet av Eirik Natlandsmyr</div>
