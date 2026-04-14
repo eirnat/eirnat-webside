@@ -51,7 +51,13 @@ type Annotation = {
   backgroundStyle: AnnotationBackgroundStyle;
 };
 type SignKind = 'stengt-skilt' | 'lyskryss-skilt' | 'veiarbeid-skilt' | 'ko-skilt';
-type SignPlacement = { coordinates: Position; kind: SignKind };
+type SignPlacement = { id: string; coordinates: Position; kind: SignKind };
+type LegendRow = {
+  id: 'closed' | 'reduced' | 'detour';
+  label: string;
+  casingColor: string;
+  mainColor: string;
+};
 
 type FeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry>;
 
@@ -78,8 +84,25 @@ const SIGN_ASSET_PATHS: Record<SignKind, string> = {
   'ko-skilt': '/icons/trafikkork.svg'
 };
 
-/** Samme faktor som `icon-size` på closed-sign-layer (PNG-eksport bruker samme verdi). */
-const CLOSED_SIGN_ICON_SIZE = 0.25;
+const LEGEND_ROWS: LegendRow[] = [
+  { id: 'closed', label: 'Stengt veg', casingColor: SVV_COLORS.closedRoadOutline, mainColor: SVV_COLORS.closedRoad },
+  {
+    id: 'reduced',
+    label: 'Redusert fremkommelighet',
+    casingColor: SVV_COLORS.reducedRoadOutline,
+    mainColor: SVV_COLORS.reducedRoad
+  },
+  { id: 'detour', label: 'Alternativ rute', casingColor: SVV_COLORS.detourOutline, mainColor: SVV_COLORS.detour }
+];
+
+const getActiveLegendRows = (hasClosed: boolean, hasReduced: boolean, hasDetour: boolean): LegendRow[] => {
+  return LEGEND_ROWS.filter((row) => {
+    if (row.id === 'closed') return hasClosed;
+    if (row.id === 'reduced') return hasReduced;
+    return hasDetour;
+  });
+};
+
 /** Samme som normalisert bredde/høyde i loadSignAssets (px). */
 const CLOSED_SIGN_PNG_BASE_SIZE = 128;
 
@@ -257,6 +280,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [showZoomHint, setShowZoomHint] = useState(true);
+  const [legendRenderVersion, setLegendRenderVersion] = useState(0);
   const editingAnnotationIdRef = useRef<string | null>(null);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
@@ -569,6 +593,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     updateSourceData('annotations-source', emptyFeatureCollection());
     removeAllAnnotationMarkers();
     closeAnnotationPopup();
+    setLegendRenderVersion((prev) => prev + 1);
   };
 
   const getRoadLabel = (properties: GeoJSON.GeoJsonProperties | null | undefined) => {
@@ -609,12 +634,13 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       type: 'FeatureCollection',
       features: [...detourFeaturesRef.current, ...freeDrawFeature]
     });
+    setLegendRenderVersion((prev) => prev + 1);
   };
 
   const syncClosedSources = () => {
     const signFeatures: GeoJSON.Feature<GeoJSON.Point>[] = closedSignsRef.current.map((s) => ({
       type: 'Feature',
-      properties: { kind: s.kind } as GeoJSON.GeoJsonProperties,
+      properties: { id: s.id, kind: s.kind } as GeoJSON.GeoJsonProperties,
       geometry: { type: 'Point', coordinates: s.coordinates }
     })) as GeoJSON.Feature<GeoJSON.Point>[];
 
@@ -626,6 +652,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       type: 'FeatureCollection',
       features: signFeatures
     });
+    setLegendRenderVersion((prev) => prev + 1);
   };
 
   const syncReducedSource = () => {
@@ -633,6 +660,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       type: 'FeatureCollection',
       features: reducedRoadFeaturesRef.current
     });
+    setLegendRenderVersion((prev) => prev + 1);
   };
 
   /** Oppdater alle egne GeoJSON-kilder fra refs / annotasjons-state (etter ny stil). */
@@ -885,7 +913,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     mapInstance.moveLayer('nvdb-hitbox');
 
     mapInstance.on('mousemove', 'nvdb-hitbox', (event) => {
-      mapInstance.getCanvas().style.cursor = 'pointer';
       const feature = event.features?.[0] as GeoJSON.Feature<GeoJSON.LineString> | undefined;
       if (!feature || feature.geometry.type !== 'LineString') return;
 
@@ -1055,7 +1082,15 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       source: 'closed-signs',
       layout: {
         'icon-image': ['get', 'kind'],
-        'icon-size': CLOSED_SIGN_ICON_SIZE,
+        'icon-size': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          13, 0.20,
+          16, 0.35,
+          19, 0.55
+        ],
+        'icon-pitch-alignment': 'viewport',
         'icon-allow-overlap': true,
         'icon-ignore-placement': true
       },
@@ -1067,73 +1102,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     mapInstance.on('mouseleave', 'nvdb-hitbox', () => {
       mapInstance.setPaintProperty('nvdb-hover-layer', 'line-opacity', 0);
-      mapInstance.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
-    });
-
-    mapInstance.on('click', 'nvdb-hitbox', (event) => {
-      const skiltVerktoy: ActiveTool[] = ['sign', 'traffic-light', 'road-work', 'queue'];
-      if (skiltVerktoy.includes(activeToolRef.current) || activeToolRef.current === 'text') {
-        return; // La klikket passere til kartet
-      }
-
-      if (
-        activeToolRef.current !== 'closed' &&
-        activeToolRef.current !== 'reduced' &&
-        activeToolRef.current !== 'detour'
-      ) {
-        return;
-      }
-
-      const clickedFeature = event.features?.[0] as GeoJSON.Feature<GeoJSON.LineString> | undefined;
-      if (!clickedFeature || clickedFeature.geometry.type !== 'LineString') return;
-
-      const coordinates = clickedFeature.geometry.coordinates as Position[];
-      if (coordinates.length < 2) return;
-
-      const roadLabel = getRoadLabel(clickedFeature.properties);
-      const roadId = getFeatureRoadId(clickedFeature);
-
-      // Unngå dobbelthåndtering (f.eks. omvei-punkt) kun når vi faktisk bruker linje-verktøyet på et gyldig treff.
-      skipNextMapClickRef.current = true;
-
-      if (activeToolRef.current === 'closed') {
-        closedRoadFeaturesRef.current = [
-          ...closedRoadFeaturesRef.current,
-          {
-            type: 'Feature',
-            properties: { kind: 'closed-road', roadLabel, roadId },
-            geometry: { type: 'LineString', coordinates }
-          }
-        ];
-        actionHistoryRef.current.push('closed-segment');
-        syncClosedSources();
-      }
-
-      if (activeToolRef.current === 'detour') {
-        detourFeaturesRef.current = [
-          ...detourFeaturesRef.current,
-          {
-            type: 'Feature',
-            properties: { kind: 'detour-road', roadLabel, roadId },
-            geometry: { type: 'LineString', coordinates }
-          }
-        ];
-        actionHistoryRef.current.push('detour-segment');
-        syncDetourSource();
-      }
-
-      if (activeToolRef.current === 'reduced') {
-        reducedRoadFeaturesRef.current = [
-          ...reducedRoadFeaturesRef.current,
-          {
-            type: 'Feature',
-            properties: { kind: 'reduced-road', roadLabel, roadId },
-            geometry: { type: 'LineString', coordinates }
-          }
-        ];
-        actionHistoryRef.current.push('reduced-segment');
-        syncReducedSource();
-      }
     });
   };
 
@@ -1291,6 +1259,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             ctx.drawImage(canvas, 0, 0);
 
             const dpr = window.devicePixelRatio || 1;
+            const currentZoom = mapInstance.getZoom();
             for (const sign of closedSignsRef.current) {
               const image = signImageCacheRef.current[sign.kind];
               if (!image) continue;
@@ -1298,12 +1267,17 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               const projected = mapInstance.project(sign.coordinates);
 
               const baseHeight = CLOSED_SIGN_PNG_BASE_SIZE;
-              const targetScale = CLOSED_SIGN_ICON_SIZE;
+              let targetScale = 0.25;
+              if (currentZoom <= 13) targetScale = 0.20;
+              else if (currentZoom >= 19) targetScale = 0.55;
+              else {
+                targetScale = 0.20 + (0.35 * (currentZoom - 13) / 6);
+              }
               const nw = image.naturalWidth || 1;
               const nh = image.naturalHeight || 1;
               const aspectRatio = nw / nh;
 
-              const h = baseHeight * targetScale * dpr;
+              const h = (baseHeight * targetScale) * dpr;
               const w = h * aspectRatio;
 
               const x = projected.x * dpr - w / 2;
@@ -1409,10 +1383,27 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               ctx.restore();
             }
 
-            if (showLegend) {
+            const hasClosedLegend =
+              closedRoadFeaturesRef.current.length > 0 || closedSignsRef.current.length > 0;
+            const hasReducedLegend = reducedRoadFeaturesRef.current.length > 0;
+            const hasDetourLegend =
+              detourFeaturesRef.current.length > 0 || detourPointsRef.current.length > 0;
+            const activeLegendRows = getActiveLegendRows(
+              hasClosedLegend,
+              hasReducedLegend,
+              hasDetourLegend
+            );
+
+            if (showLegend && activeLegendRows.length > 0) {
               const boxX = 16 * dpr;
-              const boxW = 260 * dpr;
-              const boxH = 100 * dpr;
+              const boxW = 330 * dpr;
+              const legendTopInset = 18 * dpr;
+              const legendBottomInset = 18 * dpr;
+              const legendRowSpacing = 32 * dpr;
+              const boxH =
+                legendTopInset +
+                legendBottomInset +
+                Math.max(0, activeLegendRows.length - 1) * legendRowSpacing;
               const boxY = exportCanvas.height - 20 * dpr - boxH;
 
               ctx.save();
@@ -1434,36 +1425,30 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
                 const endX = boxX + 86 * dpr;
                 ctx.lineCap = 'round';
                 ctx.strokeStyle = casingColor;
-                ctx.lineWidth = 8 * dpr;
+                ctx.lineWidth = 9 * dpr;
                 ctx.beginPath();
                 ctx.moveTo(startX, y);
                 ctx.lineTo(endX, y);
                 ctx.stroke();
 
                 ctx.strokeStyle = mainColor;
-                ctx.lineWidth = 5 * dpr;
+                ctx.lineWidth = 6 * dpr;
                 ctx.beginPath();
                 ctx.moveTo(startX, y);
                 ctx.lineTo(endX, y);
                 ctx.stroke();
               };
 
-              const legendRowSpacing = 25 * dpr;
-              const row1Y = boxY + 22 * dpr;
-              const row2Y = row1Y + legendRowSpacing;
-              const row3Y = row2Y + legendRowSpacing;
-              drawLegendLine(row1Y, SVV_COLORS.closedRoadOutline, SVV_COLORS.closedRoad);
-              drawLegendLine(row2Y, SVV_COLORS.reducedRoadOutline, SVV_COLORS.reducedRoad);
-              drawLegendLine(row3Y, SVV_COLORS.detourOutline, SVV_COLORS.detour);
-
               ctx.fillStyle = '#111827';
-              // text-xs (12px) i DOM — skaleres med DPR for skarp PNG-tekst
-              ctx.font = `${12 * dpr}px Arial, sans-serif`;
+              // Større, fet legend-tekst for bedre lesbarhet i nedskalerte bilder.
+              ctx.font = `bold ${16 * dpr}px Arial, sans-serif`;
               ctx.textAlign = 'left';
               ctx.textBaseline = 'middle';
-              ctx.fillText('Stengt veg', boxX + 98 * dpr, row1Y);
-              ctx.fillText('Redusert fremkommelighet', boxX + 98 * dpr, row2Y);
-              ctx.fillText('Alternativ rute', boxX + 98 * dpr, row3Y);
+              activeLegendRows.forEach((row, index) => {
+                const rowY = boxY + legendTopInset + index * legendRowSpacing;
+                drawLegendLine(rowY, row.casingColor, row.mainColor);
+                ctx.fillText(row.label, boxX + 106 * dpr, rowY);
+              });
               ctx.restore();
             }
 
@@ -1507,7 +1492,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       container: mapContainer.current,
       style: initialStyleUrl,
       center: [8.5, 61.5], // Mer sentralt startpunkt for Sor-Norge
-      zoom: 5.5,
+      zoom: 7.5,
       preserveDrawingBuffer: true,
       crossOrigin: 'anonymous',
       canvasContextAttributes: {
@@ -1536,9 +1521,114 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         skipNextMapClickRef.current = false;
         return;
       }
+      const mapInstance = map.current;
+      if (!mapInstance) return;
 
       if (editingAnnotationIdRef.current) {
         setEditingAnnotationId(null);
+      }
+
+      const slettbareLag = ['closed-sign-layer', 'closed-road-fill', 'reduced-road-fill', 'detour-road-layer'];
+      const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
+      if (eksisterendeLag.length === 0) return;
+      const features = mapInstance.queryRenderedFeatures(event.point, { layers: eksisterendeLag });
+
+      if (features.length > 0) {
+        const feature = features[0];
+        const layerId = feature.layer.id;
+        const properties = (feature.properties ?? {}) as Record<string, unknown>;
+
+        if (layerId === 'closed-sign-layer') {
+          const targetId = typeof properties.id === 'string' ? properties.id : null;
+          if (targetId) {
+            closedSignsRef.current = closedSignsRef.current.filter((sign) => sign.id !== targetId);
+            syncClosedSources();
+          }
+        } else {
+          const targetUuid = typeof properties.uuid === 'string' ? properties.uuid : null;
+          if (targetUuid) {
+            if (layerId === 'closed-road-fill') {
+              closedRoadFeaturesRef.current = closedRoadFeaturesRef.current.filter(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
+              );
+              syncClosedSources();
+            } else if (layerId === 'reduced-road-fill') {
+              reducedRoadFeaturesRef.current = reducedRoadFeaturesRef.current.filter(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
+              );
+              syncReducedSource();
+            } else if (layerId === 'detour-road-layer') {
+              detourFeaturesRef.current = detourFeaturesRef.current.filter(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
+              );
+              syncDetourSource();
+            }
+          }
+        }
+        console.log('Element slettet');
+        return;
+      }
+
+      const nvdbLag = ['nvdb-hitbox'].filter((id) => mapInstance.getLayer(id));
+      const nvdbFeatures =
+        nvdbLag.length > 0
+          ? mapInstance.queryRenderedFeatures(event.point, { layers: nvdbLag })
+          : [];
+      if (
+        nvdbFeatures.length > 0 &&
+        (activeToolRef.current === 'closed' ||
+          activeToolRef.current === 'reduced' ||
+          activeToolRef.current === 'detour')
+      ) {
+        const clickedFeature = nvdbFeatures[0] as GeoJSON.Feature<GeoJSON.LineString>;
+        if (clickedFeature.geometry.type !== 'LineString') return;
+
+        const coordinates = clickedFeature.geometry.coordinates as Position[];
+        if (coordinates.length < 2) return;
+
+        const roadLabel = getRoadLabel(clickedFeature.properties);
+        const roadId = getFeatureRoadId(clickedFeature);
+        const uuid = crypto.randomUUID();
+
+        if (activeToolRef.current === 'closed') {
+          closedRoadFeaturesRef.current = [
+            ...closedRoadFeaturesRef.current,
+            {
+              type: 'Feature',
+              properties: { kind: 'closed-road', roadLabel, roadId, uuid },
+              geometry: { type: 'LineString', coordinates }
+            }
+          ];
+          actionHistoryRef.current.push('closed-segment');
+          syncClosedSources();
+          return;
+        }
+
+        if (activeToolRef.current === 'reduced') {
+          reducedRoadFeaturesRef.current = [
+            ...reducedRoadFeaturesRef.current,
+            {
+              type: 'Feature',
+              properties: { kind: 'reduced-road', roadLabel, roadId, uuid },
+              geometry: { type: 'LineString', coordinates }
+            }
+          ];
+          actionHistoryRef.current.push('reduced-segment');
+          syncReducedSource();
+          return;
+        }
+
+        detourFeaturesRef.current = [
+          ...detourFeaturesRef.current,
+          {
+            type: 'Feature',
+            properties: { kind: 'detour-road', roadLabel, roadId, uuid },
+            geometry: { type: 'LineString', coordinates }
+          }
+        ];
+        actionHistoryRef.current.push('detour-segment');
+        syncDetourSource();
+        return;
       }
 
       const clickedPosition: Position = [event.lngLat.lng, event.lngLat.lat];
@@ -1575,7 +1665,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           'queue': 'ko-skilt'
         };
         const selectedIcon = iconMap[tool];
-        closedSignsRef.current = [...closedSignsRef.current, { coordinates: clickedPosition, kind: selectedIcon }];
+        closedSignsRef.current = [
+          ...closedSignsRef.current,
+          { id: crypto.randomUUID(), coordinates: clickedPosition, kind: selectedIcon }
+        ];
         actionHistoryRef.current.push('closed-sign');
         syncClosedSources();
         return;
@@ -1586,6 +1679,22 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         actionHistoryRef.current.push('detour-point');
         syncDetourSource();
       }
+    });
+
+    map.current.on('mousemove', (event) => {
+      const mapInstance = map.current;
+      if (!mapInstance) return;
+      const slettbareLag = ['closed-sign-layer', 'closed-road-fill', 'reduced-road-fill', 'detour-road-layer'];
+      const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
+      const features =
+        eksisterendeLag.length > 0
+          ? mapInstance.queryRenderedFeatures(event.point, { layers: eksisterendeLag })
+          : [];
+      if (features.length > 0) {
+        mapInstance.getCanvas().style.cursor = 'pointer';
+        return;
+      }
+      mapInstance.getCanvas().style.cursor = activeToolRef.current === 'none' ? '' : 'crosshair';
     });
 
     map.current.once('load', async () => {
@@ -1967,53 +2076,39 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     annotationPopupRef.current?.setLngLat(selected.coordinates);
   }, [annotations]);
 
+  const activeLegendRows = useMemo(() => {
+    const hasClosed = closedRoadFeaturesRef.current.length > 0 || closedSignsRef.current.length > 0;
+    const hasReduced = reducedRoadFeaturesRef.current.length > 0;
+    const hasDetour = detourFeaturesRef.current.length > 0 || detourPointsRef.current.length > 0;
+    return getActiveLegendRows(hasClosed, hasReduced, hasDetour);
+  }, [legendRenderVersion]);
+
   return (
     <div className="relative h-full w-full">
       <div ref={mapContainer} className="h-full w-full" />
-      {showLegend && (
+      {showLegend && activeLegendRows.length > 0 && (
         <div
-          className="absolute bottom-10 left-4 rounded-md border-2 border-black bg-white p-3 shadow-lg"
+          className="absolute bottom-10 left-4 w-[330px] rounded-md border-2 border-black bg-white p-2 shadow-lg"
           style={{ fontFamily: 'Arial, sans-serif' }}
         >
-          <div className="flex items-center gap-2 text-xs text-slate-800">
-            <div className="relative h-2.5 w-16">
-              <span
-                className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: SVV_COLORS.closedRoadOutline }}
-              />
-              <span
-                className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: SVV_COLORS.closedRoad }}
-              />
+          {activeLegendRows.map((row, index) => (
+            <div
+              key={row.id}
+              className={`${index === 0 ? '' : 'mt-1.5 '}flex items-center gap-1.5 text-[16px] font-bold text-slate-800`}
+            >
+              <div className="relative h-2.5 w-16">
+                <span
+                  className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
+                  style={{ backgroundColor: row.casingColor }}
+                />
+                <span
+                  className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full"
+                  style={{ backgroundColor: row.mainColor }}
+                />
+              </div>
+              <span>{row.label}</span>
             </div>
-            <span>Stengt veg</span>
-          </div>
-          <div className="mt-2 flex items-center gap-2 text-xs text-slate-800">
-            <div className="relative h-2.5 w-16">
-              <span
-                className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: SVV_COLORS.reducedRoadOutline }}
-              />
-              <span
-                className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: SVV_COLORS.reducedRoad }}
-              />
-            </div>
-            <span>Redusert fremkommelighet</span>
-          </div>
-          <div className="mt-2 flex items-center gap-2 text-xs text-slate-800">
-            <div className="relative h-2.5 w-16">
-              <span
-                className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: SVV_COLORS.detourOutline }}
-              />
-              <span
-                className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: SVV_COLORS.detour }}
-              />
-            </div>
-            <span>Alternativ rute</span>
-          </div>
+          ))}
         </div>
       )}
       {showZoomHint && (
