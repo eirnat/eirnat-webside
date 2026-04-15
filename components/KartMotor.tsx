@@ -97,13 +97,15 @@ const emptyFeatureCollection = (): FeatureCollection => ({
 
 /** NVDB-vegnett vises og hentes kun ved zoom >= dette nivået. */
 const NVDB_MIN_ZOOM = 14;
+const NVDB_BASE_URL = 'https://nvdbapiles.atlas.vegvesen.no';
 
 /** Skjules midlertidig under PNG-eksport (grå referansevegnett). */
 const NVDB_EXPORT_HIDE_LAYER_IDS = ['nvdb-layer', 'nvdb-hitbox', 'nvdb-hover-layer'] as const;
 
 const buildMapTilerStyleUrl = (mapStyle: 'dataviz' | 'streets'): string => {
   const slug = mapStyle + (mapStyle === 'streets' ? '-v2' : '');
-  return `https://api.maptiler.com/maps/${slug}/style.json?key=${process.env.NEXT_PUBLIC_MAPTILER_KEY}`;
+  const mapTilerKey = (process.env.NEXT_PUBLIC_MAPTILER_KEY ?? '').trim();
+  return `https://api.maptiler.com/maps/${slug}/style.json?key=${encodeURIComponent(mapTilerKey)}`;
 };
 
 const SIGN_ASSET_PATHS: Record<SignKind, string> = {
@@ -1274,7 +1276,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (bbox === lastFetchedBboxRef.current) return;
       lastFetchedBboxRef.current = bbox;
 
-      const url = `https://nvdbapiles.atlas.vegvesen.no/vegnett/veglenkesekvenser/segmentert?kartutsnitt=${bbox}&srid=4326&antall=1500`;
+      const url = `${NVDB_BASE_URL}/vegnett/veglenkesekvenser/segmentert?kartutsnitt=${bbox}&srid=4326&antall=1500`;
       const response = await fetch(url, {
         headers: {
           'X-Client': 'eirnat-kartverktøy-frontend',
