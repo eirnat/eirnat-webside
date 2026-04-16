@@ -471,6 +471,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     for (const annotation of nextAnnotations) {
       if (markerMap[annotation.id]) continue;
       let dragOccurred = false;
+      let suppressClickUntil = 0;
       const box = document.createElement('div');
       box.dataset.annotationId = annotation.id;
       box.style.position = 'relative';
@@ -535,6 +536,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
       box.addEventListener('click', (event) => {
         if (dragOccurred) return;
+        if (Date.now() < suppressClickUntil) return;
         if (map.current?.isEasing()) return;
         event.stopPropagation();
         skipNextMapClickRef.current = true;
@@ -546,9 +548,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
       marker.on('dragstart', () => {
         dragOccurred = true;
+        suppressClickUntil = Date.now() + 10000;
         map.current?.dragPan.disable();
         draggingAnnotationIdRef.current = annotation.id;
-        setEditingAnnotationId((prev) => (prev === annotation.id ? prev : annotation.id));
         closeAnnotationPopup();
         if (map.current) map.current.getCanvas().style.cursor = 'grabbing';
       });
@@ -556,6 +558,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       marker.on('dragend', () => {
         map.current?.dragPan.enable();
         draggingAnnotationIdRef.current = null;
+        suppressClickUntil = Date.now() + 250;
         const dragged = marker.getLngLat();
         const coordinates: Position = [dragged.lng, dragged.lat];
         setAnnotations((prev) =>
@@ -654,13 +657,13 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
   const getPopupPlacement = (coordinates: Position): { anchor: 'bottom' | 'top'; offset: [number, number] } => {
     const mapInstance = map.current;
-    if (!mapInstance) return { anchor: 'bottom', offset: [0, -50] };
+    if (!mapInstance) return { anchor: 'bottom', offset: [0, -80] };
     const projected = mapInstance.project(coordinates);
     const mapHeight = mapInstance.getContainer().clientHeight;
     if (projected.y > mapHeight / 2) {
-      return { anchor: 'bottom', offset: [0, -50] };
+      return { anchor: 'bottom', offset: [0, -80] };
     }
-    return { anchor: 'top', offset: [0, 50] };
+    return { anchor: 'top', offset: [0, 80] };
   };
 
   const clearAllDrawings = () => {
@@ -1624,18 +1627,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
         const runCapture = async () => {
           const exportCanvas = document.createElement('canvas');
-          exportCanvas.width = canvas.width;
-          exportCanvas.height = canvas.height;
           const ctx = exportCanvas.getContext('2d');
           try {
             if (!ctx) return;
 
+            const dpr = window.devicePixelRatio || 1;
+            const { width, height } = mapInstance.getContainer().getBoundingClientRect();
+            exportCanvas.width = width * dpr;
+            exportCanvas.height = height * dpr;
+
             // Legg hvit bakgrunn bak kartet for mer lesbart PNG-resultat.
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-            ctx.drawImage(canvas, 0, 0);
-
-            const dpr = window.devicePixelRatio || 1;
+            ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
             const currentZoom = mapInstance.getZoom();
             for (const sign of closedSignsRef.current) {
               const image = signImageCacheRef.current[sign.kind];
@@ -1704,7 +1708,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
 
-              const lineHeight = fontSize * 1.05;
+              const lineHeight = fontSize;
               const textWidth = wrappedLines.reduce((max, line) => {
                 const lineWidth = ctx.measureText(line).width;
                 return Math.max(max, lineWidth);
@@ -1712,15 +1716,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               const textHeight = wrappedLines.length * lineHeight;
               if (annotation.backgroundStyle === 'white' || annotation.backgroundStyle === 'green') {
                 const padX = 10 * dpr;
-                const padY = annotation.backgroundStyle === 'green' ? 8 * dpr : 3 * dpr;
-                const rawBoxX = -textWidth / 2 - padX;
-                const rawBoxY = -textHeight / 2 - padY;
-                const rawBoxW = textWidth + padX * 2;
-                const rawBoxH = textHeight + padY * 2;
-                const boxX = Math.round(rawBoxX);
-                const boxY = Math.round(rawBoxY);
-                const boxW = Math.round(rawBoxW);
-                const boxH = Math.round(rawBoxH);
+                const padY = 5 * dpr;
+                const boxW = textWidth + padX * 2;
+                const boxH = textHeight + padY * 2;
+                const boxX = -boxW / 2;
+                const boxY = -boxH / 2;
                 const radius =
                   annotation.backgroundStyle === 'green' ? 2 * dpr : 6 * dpr;
                 const borderWidth = annotation.backgroundStyle === 'green' ? 1 * dpr : 2 * dpr;
@@ -1856,7 +1856,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         window.setTimeout(() => {
           if (captured) return;
           scheduleCapture();
-        }, 200);
+        }, 300);
       })();
     },
     exportMapData,
