@@ -1280,7 +1280,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       const response = await fetch(url, {
         headers: {
           'X-Client': 'eirnat-kartverktøy-frontend',
-          'Accept': 'application/vnd.vegvesen.nvdb-v4+json'
+          'Accept': 'application/vnd.vegvesen.nvdb-v4+json',
+          'Access-Control-Request-Private-Network': 'true'
         }
       });
 
