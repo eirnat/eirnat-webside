@@ -9,6 +9,8 @@ const SVV_COLORS = {
   closedRoadOutline: "#990000", // Mork rod casing
   reducedRoad: "#FF9900", // SVV Oransje
   reducedRoadOutline: "#B36B00", // Mork oransje casing
+  pedestrian: "#0099FF", // Lys bla
+  pedestrianOutline: "#005999", // Morkere bla casing
   detour: "#00B359",     // SVV Grønn
   detourOutline: "#005c31", // Mork gronn casing
   background: "#F5F5F5"
@@ -18,6 +20,7 @@ export type ActiveTool =
   | 'none'
   | 'closed'
   | 'reduced'
+  | 'pedestrian'
   | 'detour'
   | 'sign'
   | 'traffic-light'
@@ -55,7 +58,7 @@ type Annotation = {
 type SignKind = 'stengt-skilt' | 'lyskryss-skilt' | 'veiarbeid-skilt' | 'ko-skilt';
 type SignPlacement = { id: string; coordinates: Position; kind: SignKind };
 type LegendRow = {
-  id: 'closed' | 'reduced' | 'detour';
+  id: 'closed' | 'reduced' | 'pedestrian' | 'detour';
   label: string;
   casingColor: string;
   mainColor: string;
@@ -63,6 +66,7 @@ type LegendRow = {
 type ActionCategory =
   | 'closed-segment'
   | 'reduced-segment'
+  | 'pedestrian-segment'
   | 'closed-sign'
   | 'detour-segment'
   | 'detour-point'
@@ -72,6 +76,7 @@ type ActionHistoryItem =
   | { type: 'delete'; category: 'closed-sign'; data: SignPlacement }
   | { type: 'delete'; category: 'closed-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
   | { type: 'delete'; category: 'reduced-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
+  | { type: 'delete'; category: 'pedestrian-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
   | { type: 'delete'; category: 'detour-segment'; data: GeoJSON.Feature<GeoJSON.LineString> };
 
 type FeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry>;
@@ -85,6 +90,7 @@ type MapProjectData = {
   closedSigns: SignPlacement[];
   closedRoadFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
   reducedRoadFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
+  pedestrianFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
   detourFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
   detourPoints: Position[];
   annotations: Annotation[];
@@ -123,13 +129,25 @@ const LEGEND_ROWS: LegendRow[] = [
     casingColor: SVV_COLORS.reducedRoadOutline,
     mainColor: SVV_COLORS.reducedRoad
   },
+  {
+    id: 'pedestrian',
+    label: 'Fotgjengere/syklister',
+    casingColor: SVV_COLORS.pedestrianOutline,
+    mainColor: SVV_COLORS.pedestrian
+  },
   { id: 'detour', label: 'Alternativ rute', casingColor: SVV_COLORS.detourOutline, mainColor: SVV_COLORS.detour }
 ];
 
-const getActiveLegendRows = (hasClosed: boolean, hasReduced: boolean, hasDetour: boolean): LegendRow[] => {
+const getActiveLegendRows = (
+  hasClosed: boolean,
+  hasReduced: boolean,
+  hasPedestrian: boolean,
+  hasDetour: boolean
+): LegendRow[] => {
   return LEGEND_ROWS.filter((row) => {
     if (row.id === 'closed') return hasClosed;
     if (row.id === 'reduced') return hasReduced;
+    if (row.id === 'pedestrian') return hasPedestrian;
     return hasDetour;
   });
 };
@@ -293,6 +311,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const detourFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const closedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const reducedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
+  const pedestrianFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const roadCacheRef = useRef<Map<string, GeoJSON.Feature<GeoJSON.LineString>>>(new Map());
   const isFetchingRef = useRef(false);
   /** Manuelt plasserte skilt (no-entry), i kartets lng/lat */
@@ -649,6 +668,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     detourFeaturesRef.current = [];
     closedRoadFeaturesRef.current = [];
     reducedRoadFeaturesRef.current = [];
+    pedestrianFeaturesRef.current = [];
     closedSignsRef.current = [];
     actionHistoryRef.current = [];
     lastEditingAnnotationSentRef.current = null;
@@ -656,6 +676,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     setAnnotations([]);
     updateSourceData('closed-road', emptyFeatureCollection());
     updateSourceData('reduced-road', emptyFeatureCollection());
+    updateSourceData('pedestrian-road', emptyFeatureCollection());
     updateSourceData('detour-road', emptyFeatureCollection());
     updateSourceData('closed-signs', emptyFeatureCollection());
     updateSourceData('annotations-source', emptyFeatureCollection());
@@ -731,10 +752,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     setLegendRenderVersion((prev) => prev + 1);
   };
 
+  const syncPedestrianSource = () => {
+    updateSourceData('pedestrian-road', {
+      type: 'FeatureCollection',
+      features: pedestrianFeaturesRef.current
+    });
+    setLegendRenderVersion((prev) => prev + 1);
+  };
+
   /** Oppdater alle egne GeoJSON-kilder fra refs / annotasjons-state (etter ny stil). */
   const syncAllData = () => {
     syncClosedSources();
     syncReducedSource();
+    syncPedestrianSource();
     syncDetourSource();
     if (roadCacheRef.current.size > 0) {
       updateSourceData('nvdb-source', {
@@ -770,6 +800,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'closed-sign-layer',
       'detour-road-layer',
       'detour-road-casing-layer',
+      'pedestrian-road-fill',
+      'pedestrian-road-outline',
       'reduced-road-fill',
       'reduced-road-outline',
       'closed-road-fill',
@@ -879,6 +911,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'closed-sign-layer',
       'detour-road-layer',
       'detour-road-casing-layer',
+      'pedestrian-road-fill',
+      'pedestrian-road-outline',
       'reduced-road-fill',
       'reduced-road-outline',
       'closed-road-fill',
@@ -891,6 +925,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'annotations-source',
       'closed-signs',
       'detour-road',
+      'pedestrian-road',
       'reduced-road',
       'closed-road',
       'nvdb-source'
@@ -932,6 +967,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addSource('reduced-road', {
+      type: 'geojson',
+      data: emptyFeatureCollection()
+    });
+
+    mapInstance.addSource('pedestrian-road', {
       type: 'geojson',
       data: emptyFeatureCollection()
     });
@@ -1042,6 +1082,26 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       source: 'reduced-road',
       paint: {
         'line-color': SVV_COLORS.reducedRoad,
+        'line-width': 6
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'pedestrian-road-outline',
+      type: 'line',
+      source: 'pedestrian-road',
+      paint: {
+        'line-color': SVV_COLORS.pedestrianOutline,
+        'line-width': 10
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'pedestrian-road-fill',
+      type: 'line',
+      source: 'pedestrian-road',
+      paint: {
+        'line-color': SVV_COLORS.pedestrian,
         'line-width': 6
       }
     });
@@ -1214,6 +1274,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         return;
       }
 
+      if (lastAction.category === 'pedestrian-segment') {
+        pedestrianFeaturesRef.current = pedestrianFeaturesRef.current.slice(0, -1);
+        syncPedestrianSource();
+        return;
+      }
+
       if (lastAction.category === 'annotation') {
         setAnnotations((prev) => {
           const next = prev.slice(0, -1);
@@ -1242,6 +1308,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (lastAction.category === 'reduced-segment') {
         reducedRoadFeaturesRef.current = [...reducedRoadFeaturesRef.current, lastAction.data];
         syncReducedSource();
+        return;
+      }
+
+      if (lastAction.category === 'pedestrian-segment') {
+        pedestrianFeaturesRef.current = [...pedestrianFeaturesRef.current, lastAction.data];
+        syncPedestrianSource();
         return;
       }
 
@@ -1334,7 +1406,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
   const normalizeLineFeatures = (
     value: unknown,
-    kind: 'closed-road' | 'reduced-road' | 'detour-road'
+    kind: 'closed-road' | 'reduced-road' | 'pedestrian-road' | 'detour-road'
   ): GeoJSON.Feature<GeoJSON.LineString>[] => {
     if (!Array.isArray(value)) return [];
     const normalized: GeoJSON.Feature<GeoJSON.LineString>[] = [];
@@ -1440,6 +1512,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       closedSigns: closedSignsRef.current,
       closedRoadFeatures: closedRoadFeaturesRef.current,
       reducedRoadFeatures: reducedRoadFeaturesRef.current,
+      pedestrianFeatures: pedestrianFeaturesRef.current,
       detourFeatures: detourFeaturesRef.current,
       detourPoints: detourPointsRef.current,
       annotations: annotationsRef.current
@@ -1463,6 +1536,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       const nextClosedSigns = normalizeSigns(parsed.closedSigns);
       const nextClosedRoadFeatures = normalizeLineFeatures(parsed.closedRoadFeatures, 'closed-road');
       const nextReducedRoadFeatures = normalizeLineFeatures(parsed.reducedRoadFeatures, 'reduced-road');
+      const nextPedestrianFeatures = normalizeLineFeatures(parsed.pedestrianFeatures, 'pedestrian-road');
       const nextDetourFeatures = normalizeLineFeatures(parsed.detourFeatures, 'detour-road');
       const nextDetourPoints = normalizeDetourPoints(parsed.detourPoints);
       const nextAnnotations = normalizeAnnotations(parsed.annotations);
@@ -1470,6 +1544,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       closedSignsRef.current = nextClosedSigns;
       closedRoadFeaturesRef.current = nextClosedRoadFeatures;
       reducedRoadFeaturesRef.current = nextReducedRoadFeatures;
+      pedestrianFeaturesRef.current = nextPedestrianFeatures;
       detourFeaturesRef.current = nextDetourFeatures;
       detourPointsRef.current = nextDetourPoints;
       actionHistoryRef.current = [];
@@ -1687,10 +1762,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
             const hasClosedLegend = closedRoadFeaturesRef.current.length > 0;
             const hasReducedLegend = reducedRoadFeaturesRef.current.length > 0;
+            const hasPedestrianLegend = pedestrianFeaturesRef.current.length > 0;
             const hasDetourLegend = detourFeaturesRef.current.length > 0;
             const activeLegendRows = getActiveLegendRows(
               hasClosedLegend,
               hasReducedLegend,
+              hasPedestrianLegend,
               hasDetourLegend
             );
 
@@ -1832,7 +1909,13 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         setEditingAnnotationId(null);
       }
 
-      const slettbareLag = ['closed-sign-layer', 'closed-road-fill', 'reduced-road-fill', 'detour-road-layer'];
+      const slettbareLag = [
+        'closed-sign-layer',
+        'closed-road-fill',
+        'reduced-road-fill',
+        'pedestrian-road-fill',
+        'detour-road-layer'
+      ];
       const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
       if (eksisterendeLag.length === 0) return;
       const features = mapInstance.queryRenderedFeatures(event.point, { layers: eksisterendeLag });
@@ -1885,6 +1968,21 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
                 (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
               );
               syncReducedSource();
+            } else if (layerId === 'pedestrian-road-fill') {
+              const deletedSegment = pedestrianFeaturesRef.current.find(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid === targetUuid
+              );
+              if (deletedSegment) {
+                actionHistoryRef.current.push({
+                  type: 'delete',
+                  category: 'pedestrian-segment',
+                  data: deletedSegment
+                });
+              }
+              pedestrianFeaturesRef.current = pedestrianFeaturesRef.current.filter(
+                (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid !== targetUuid
+              );
+              syncPedestrianSource();
             } else if (layerId === 'detour-road-layer') {
               const deletedSegment = detourFeaturesRef.current.find(
                 (feat) => (feat.properties as Record<string, unknown> | null | undefined)?.uuid === targetUuid
@@ -1916,6 +2014,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         nvdbFeatures.length > 0 &&
         (activeToolRef.current === 'closed' ||
           activeToolRef.current === 'reduced' ||
+          activeToolRef.current === 'pedestrian' ||
           activeToolRef.current === 'detour')
       ) {
         const clickedFeature = nvdbFeatures[0] as GeoJSON.Feature<GeoJSON.LineString>;
@@ -1953,6 +2052,20 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           ];
           actionHistoryRef.current.push({ type: 'add', category: 'reduced-segment' });
           syncReducedSource();
+          return;
+        }
+
+        if (activeToolRef.current === 'pedestrian') {
+          pedestrianFeaturesRef.current = [
+            ...pedestrianFeaturesRef.current,
+            {
+              type: 'Feature',
+              properties: { kind: 'pedestrian-road', roadLabel, roadId, uuid },
+              geometry: { type: 'LineString', coordinates }
+            }
+          ];
+          actionHistoryRef.current.push({ type: 'add', category: 'pedestrian-segment' });
+          syncPedestrianSource();
           return;
         }
 
@@ -2022,7 +2135,13 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     map.current.on('mousemove', (event) => {
       const mapInstance = map.current;
       if (!mapInstance) return;
-      const slettbareLag = ['closed-sign-layer', 'closed-road-fill', 'reduced-road-fill', 'detour-road-layer'];
+      const slettbareLag = [
+        'closed-sign-layer',
+        'closed-road-fill',
+        'reduced-road-fill',
+        'pedestrian-road-fill',
+        'detour-road-layer'
+      ];
       const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
       const features =
         eksisterendeLag.length > 0
@@ -2416,8 +2535,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const activeLegendRows = useMemo(() => {
     const hasClosed = closedRoadFeaturesRef.current.length > 0;
     const hasReduced = reducedRoadFeaturesRef.current.length > 0;
+    const hasPedestrian = pedestrianFeaturesRef.current.length > 0;
     const hasDetour = detourFeaturesRef.current.length > 0;
-    return getActiveLegendRows(hasClosed, hasReduced, hasDetour);
+    return getActiveLegendRows(hasClosed, hasReduced, hasPedestrian, hasDetour);
   }, [legendRenderVersion]);
 
   return (
