@@ -162,7 +162,7 @@ export default function LagKartPage() {
                 VERKTØY
               </div>
               <div className="flex flex-col gap-3">
-                <div className="grid grid-cols-3 gap-1">
+                <div className="grid grid-cols-4 gap-1">
                   <button
                     type="button"
                     onClick={() => setActiveTool((prev) => (prev === "closed" ? "none" : "closed"))}
@@ -198,6 +198,30 @@ export default function LagKartPage() {
                   >
                     <GitBranch className={`h-4 w-4 shrink-0 ${activeTool === "detour" ? "text-white" : "text-green-600"}`} />
                     <span>Omkjøring</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTool((prev) => (prev === "pedestrian" ? "none" : "pedestrian"))}
+                    className={`flex min-h-[75px] flex-col items-center justify-center gap-1 rounded-lg border px-1 py-4 text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 ${
+                      activeTool === "pedestrian"
+                        ? "border-2 border-blue-700 bg-blue-600 text-white"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="20"
+                      height="20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={`shrink-0 ${activeTool === "pedestrian" ? "text-white" : "text-blue-700"}`}
+                    >
+                      <path d="M13 4a1 1 0 1 0 2 0 1 1 0 1 0-2 0M13 22l-2-7 1-4.5 4-2.5m-7 5 3 2.5 1 5.5m-3-10.5 4-1M10 8.5l-2 2.5 2 3" />
+                    </svg>
+                    <span>Fotg./sykkel</span>
                   </button>
                 </div>
 
@@ -363,7 +387,7 @@ export default function LagKartPage() {
           {/* Mobil: prioritert rad øverst, resten under i samme scroll (aside) */}
           <div className="flex flex-col lg:hidden">
             <div className="mb-4 flex w-full shrink-0 flex-col gap-2">
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-5 gap-2">
                 <button
                   type="button"
                   onClick={() =>
@@ -417,6 +441,34 @@ export default function LagKartPage() {
                     }`}
                   />
                   <span className="leading-tight">Omkjøring</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveTool((prev) => (prev === "pedestrian" ? "none" : "pedestrian"))
+                  }
+                  className={`${quickActionBtn} ${
+                    activeTool === "pedestrian"
+                      ? "border-2 border-blue-700 bg-blue-600 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`shrink-0 ${
+                      activeTool === "pedestrian" ? "text-white" : "text-blue-700"
+                    }`}
+                  >
+                    <path d="M13 4a1 1 0 1 0 2 0 1 1 0 1 0-2 0M13 22l-2-7 1-4.5 4-2.5m-7 5 3 2.5 1 5.5m-3-10.5 4-1M10 8.5l-2 2.5 2 3" />
+                  </svg>
+                  <span className="leading-tight">Fotg./sykkel</span>
                 </button>
                 <button
                   type="button"
