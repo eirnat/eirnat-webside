@@ -4,7 +4,8 @@ import { usePathname } from "next/navigation";
 
 export default function ConditionalFooter() {
   const pathname = usePathname();
-  const shouldHideFooter = pathname === "/lag-kart";
+  const shouldHideFooter =
+    pathname === "/lag-kart" || pathname === "/spillsystemer/petanque";
 
   if (shouldHideFooter) return null;
 

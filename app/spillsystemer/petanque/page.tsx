@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Target, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Bungee, Fredoka } from "next/font/google";
 import Link from "next/link";
 
@@ -569,7 +569,7 @@ export default function PetanquePage() {
 
   return (
     <main
-      className={`relative min-h-screen overflow-hidden bg-[#FDF6E3] text-[#264653] ${bodyFont.className}`}
+      className={`relative min-h-screen min-h-[100dvh] overflow-hidden bg-[#FDF6E3] text-[#264653] ${bodyFont.className}`}
     >
       <div
         aria-hidden
@@ -580,23 +580,8 @@ export default function PetanquePage() {
           backgroundSize: "18px 18px, 27px 27px",
         }}
       />
-      <div className="border-b-2 border-[#264653]/20 bg-[#FDF6E3]/95 backdrop-blur-sm">
-        <div className="relative z-10 mx-auto flex max-w-4xl items-center justify-between gap-4 px-6 py-5">
-          <Link
-            href="/spillsystemer"
-            className="inline-flex items-center gap-2 rounded-full border-2 border-[#264653] bg-[#E76F51] px-4 py-2 text-sm font-semibold text-[#FDF6E3] shadow-[0_4px_0_0_#264653] transition-all hover:-translate-y-0.5 hover:bg-[#d35f45] hover:shadow-[0_6px_0_0_#264653]"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Tilbake til spillsystemer
-          </Link>
-          <div className="hidden sm:flex items-center gap-2 rounded-full border-2 border-[#264653]/30 bg-[#E9C46A]/70 px-3 py-1.5 text-sm font-semibold text-[#264653]">
-            <Target className="h-4 w-4 text-[#264653]" />
-            Petanque
-          </div>
-        </div>
-      </div>
 
-      <section className="relative z-10 px-6 pb-6 pt-14 md:pb-8 md:pt-20">
+      <section className="relative z-10 px-6 pb-6 pt-[max(1.25rem,env(safe-area-inset-top))] sm:pt-8 md:pb-8 md:pt-10">
         <div className="max-w-4xl mx-auto text-center">
           <div className="mb-3 flex items-center justify-center gap-3 text-2xl">
             <span
@@ -607,8 +592,8 @@ export default function PetanquePage() {
               🍺🤝⚫
             </span>
           </div>
-          <h1 className={`text-5xl md:text-7xl tracking-tight text-[#264653] ${headingFont.className}`}>
-            Petanque!
+          <h1 className={`text-4xl leading-tight tracking-tight text-[#264653] sm:text-5xl md:text-6xl ${headingFont.className}`}>
+            Petanque
           </h1>
           <p className="mt-4 text-base font-medium md:text-lg text-[#264653]/80 max-w-2xl mx-auto">
             Hvem skal kaste kuler i dag?
@@ -617,7 +602,7 @@ export default function PetanquePage() {
         </div>
       </section>
 
-      <section className="relative z-10 px-6 pb-20 md:pb-28">
+      <section className="relative z-10 px-6 pb-12 md:pb-16">
         <div className="max-w-4xl mx-auto space-y-6">
           {petanqueMatch.phase === "setup" && (
             <div className="space-y-4 rounded-3xl border-2 border-[#264653] bg-[#fff5df] p-5 shadow-[0_8px_0_0_#264653]">
@@ -894,6 +879,19 @@ export default function PetanquePage() {
           <PetanqueLeaderboard scriptUrl={SCRIPT_URL} />
         </div>
       </section>
+
+      <nav
+        className="relative z-10 mx-auto max-w-4xl px-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-6 text-center"
+        aria-label="Navigasjon"
+      >
+        <Link
+          href="/"
+          className="inline-flex items-center justify-center rounded-full border border-[#264653]/25 bg-[#FDF6E3]/80 px-4 py-2 text-xs font-semibold text-[#264653]/55 transition-colors hover:border-[#264653]/40 hover:text-[#264653]/85"
+        >
+          Hjem
+        </Link>
+      </nav>
+
       <style jsx>{`
         .petanque-float {
           animation: petanqueFloat 3.2s ease-in-out infinite;
