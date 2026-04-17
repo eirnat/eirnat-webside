@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Target } from "lucide-react";
+import { ArrowLeft, Target, X } from "lucide-react";
 import { Bungee, Fredoka } from "next/font/google";
 import Link from "next/link";
 
-type PetanqueMode = "singel" | "dobbel" | "trippel";
 type PetanqueTeamKey = "A" | "B";
 
 type PetanqueTeamSetup = {
-  name: string;
   players: string[];
 };
 
@@ -22,7 +20,8 @@ type PetanqueMatchEvent = {
 type PetanqueMatchState = {
   matchId: string;
   phase: "setup" | "playing" | "finished";
-  mode: PetanqueMode | null;
+  includeInStats: boolean;
+  targetPoints: number;
   startTime: string | null;
   endTime: string | null;
   teams: Record<PetanqueTeamKey, PetanqueTeamSetup>;
@@ -37,16 +36,10 @@ type LeaderboardRow = {
   goalDifference: number;
 };
 
-const PETANQUE_WIN_POINTS = 13;
+const DEFAULT_TARGET_POINTS = 13;
 const ACTIVE_PETANQUE_STORAGE_KEY = "active-petanque-match";
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbws6Hpeqp-m_LNInEmJhbN-Wh3sIThYoqb9KqTVPy4zftEDzlomoAm9TlUpX8cW7DLC9A/exec";
-
-const PLAYERS_PER_MODE: Record<PetanqueMode, number> = {
-  singel: 1,
-  dobbel: 2,
-  trippel: 3,
-};
 
 const headingFont = Bungee({
   subsets: ["latin"],
@@ -66,20 +59,12 @@ const inputClass =
 
 const labelClass = "mb-1.5 block text-sm font-semibold text-[#264653]";
 
-const modeOptions: ReadonlyArray<{
-  id: PetanqueMode;
-  label: string;
-  subtitle: string;
-}> = [
-  { id: "singel", label: "Singel", subtitle: "(1v1)" },
-  { id: "dobbel", label: "Dobbel", subtitle: "(2v2)" },
-  { id: "trippel", label: "Trippel", subtitle: "(3v3)" },
-];
+const addPlayerBtnClass =
+  "mt-3 inline-flex min-h-[48px] items-center justify-center rounded-full border-2 border-[#264653] bg-[#2A9D8F] px-5 py-2.5 text-sm font-semibold text-[#FDF6E3] shadow-[0_4px_0_0_#264653] transition-all hover:-translate-y-0.5 hover:bg-[#258b7f] hover:shadow-[0_6px_0_0_#264653]";
 
-function createEmptyTeam(playerCount: number): PetanqueTeamSetup {
+function createEmptyTeam(): PetanqueTeamSetup {
   return {
-    name: "",
-    players: Array.from({ length: playerCount }, () => ""),
+    players: [""],
   };
 }
 
@@ -91,12 +76,13 @@ function createInitialPetanqueState(): PetanqueMatchState {
   return {
     matchId: initialMatchId,
     phase: "setup",
-    mode: null,
+    includeInStats: true,
+    targetPoints: DEFAULT_TARGET_POINTS,
     startTime: null,
     endTime: null,
     teams: {
-      A: createEmptyTeam(1),
-      B: createEmptyTeam(1),
+      A: createEmptyTeam(),
+      B: createEmptyTeam(),
     },
     score: {
       A: 0,
@@ -112,14 +98,20 @@ async function saveToCloud(data: PetanqueMatchState): Promise<boolean> {
 
   const winnerTeam: PetanqueTeamKey = data.winner;
   const loserTeam: PetanqueTeamKey = winnerTeam === "A" ? "B" : "A";
-  const winners = data.teams[winnerTeam].players.join(", ");
-  const losers = data.teams[loserTeam].players.join(", ");
+  const winners = data.teams[winnerTeam].players
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .join(", ");
+  const losers = data.teams[loserTeam].players
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .join(", ");
 
   const payload = {
     schema_version: 1,
     kamp_id: data.matchId,
     dato: new Date(data.endTime ?? Date.now()).toLocaleString("nb-NO"),
-    modus: data.mode ?? "",
+    modus: `fri-lagstorrelse-${data.targetPoints}`,
     vinnere: winners,
     tapere: losers,
     score_vinner: data.score[winnerTeam],
@@ -307,18 +299,23 @@ export default function PetanquePage() {
   );
   const [petanqueStorageReady, setPetanqueStorageReady] = useState(false);
   const [petanqueCloudStatus, setPetanqueCloudStatus] = useState<
-    "idle" | "sending" | "saved" | "error"
+    "idle" | "sending" | "saved" | "error" | "skipped"
   >("idle");
   const [lastSyncedMatchId, setLastSyncedMatchId] = useState<string | null>(null);
-
-  const playersPerTeam = petanqueMatch.mode
-    ? PLAYERS_PER_MODE[petanqueMatch.mode]
-    : 0;
 
   const lastPetanqueEvent =
     petanqueMatch.history.length > 0
       ? petanqueMatch.history[petanqueMatch.history.length - 1]
       : null;
+
+  function hentAktiveSpillere(team: PetanqueTeamKey, state: PetanqueMatchState = petanqueMatch) {
+    return state.teams[team].players.map((name) => name.trim()).filter(Boolean);
+  }
+
+  function formatTeamName(team: PetanqueTeamKey, state: PetanqueMatchState = petanqueMatch) {
+    const spillere = hentAktiveSpillere(team, state);
+    return spillere.length > 0 ? spillere.join(" / ") : `Lag ${team}`;
+  }
 
   useEffect(() => {
     try {
@@ -334,7 +331,22 @@ export default function PetanquePage() {
         "score" in parsed &&
         "history" in parsed
       ) {
-        setPetanqueMatch(parsed);
+        const parsedAsMatch = parsed as Partial<PetanqueMatchState> & {
+          teams: PetanqueMatchState["teams"];
+          score: PetanqueMatchState["score"];
+          history: PetanqueMatchState["history"];
+        };
+        const normalizedTargetPoints = Math.max(
+          1,
+          Math.round(Number(parsedAsMatch.targetPoints ?? DEFAULT_TARGET_POINTS))
+        );
+        setPetanqueMatch({
+          ...parsedAsMatch,
+          includeInStats: parsedAsMatch.includeInStats ?? true,
+          targetPoints: Number.isFinite(normalizedTargetPoints)
+            ? normalizedTargetPoints
+            : DEFAULT_TARGET_POINTS,
+        } as PetanqueMatchState);
       }
     } catch (error) {
       console.error("Klarte ikke lese lagret petanque-kamp fra localStorage", error);
@@ -359,6 +371,10 @@ export default function PetanquePage() {
   useEffect(() => {
     if (petanqueMatch.phase !== "finished") return;
     if (!petanqueMatch.winner || !petanqueMatch.endTime || !petanqueMatch.matchId) return;
+    if (!petanqueMatch.includeInStats) {
+      setPetanqueCloudStatus("skipped");
+      return;
+    }
     if (lastSyncedMatchId === petanqueMatch.matchId) return;
 
     let cancelled = false;
@@ -377,44 +393,7 @@ export default function PetanquePage() {
   }, [petanqueMatch, lastSyncedMatchId]);
 
   const canStartPetanqueMatch =
-    !!petanqueMatch.mode &&
-    petanqueMatch.teams.A.players.every((name) => name.trim().length > 0) &&
-    petanqueMatch.teams.B.players.every((name) => name.trim().length > 0);
-
-  function velgPetanqueMode(mode: PetanqueMode) {
-    const playerCount = PLAYERS_PER_MODE[mode];
-    const matchId =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `petanque-${Date.now()}`;
-    setPetanqueMatch({
-      matchId,
-      phase: "setup",
-      mode,
-      startTime: null,
-      endTime: null,
-      teams: {
-        A: createEmptyTeam(playerCount),
-        B: createEmptyTeam(playerCount),
-      },
-      score: { A: 0, B: 0 },
-      history: [],
-      winner: null,
-    });
-  }
-
-  function oppdaterPetanqueLagnavn(team: PetanqueTeamKey, name: string) {
-    setPetanqueMatch((prev) => ({
-      ...prev,
-      teams: {
-        ...prev.teams,
-        [team]: {
-          ...prev.teams[team],
-          name,
-        },
-      },
-    }));
-  }
+    hentAktiveSpillere("A").length > 0 && hentAktiveSpillere("B").length > 0;
 
   function oppdaterPetanqueSpillernavn(
     team: PetanqueTeamKey,
@@ -437,8 +416,62 @@ export default function PetanquePage() {
     });
   }
 
+  function leggTilPetanqueSpiller(team: PetanqueTeamKey) {
+    setPetanqueMatch((prev) => ({
+      ...prev,
+      teams: {
+        ...prev.teams,
+        [team]: {
+          ...prev.teams[team],
+          players: [...prev.teams[team].players, ""],
+        },
+      },
+    }));
+  }
+
+  function fjernPetanqueSpiller(team: PetanqueTeamKey, playerIdx: number) {
+    setPetanqueMatch((prev) => {
+      if (prev.teams[team].players.length <= 1) return prev;
+      const nextPlayers = prev.teams[team].players.filter((_, idx) => idx !== playerIdx);
+      return {
+        ...prev,
+        teams: {
+          ...prev.teams,
+          [team]: {
+            ...prev.teams[team],
+            players: nextPlayers.length > 0 ? nextPlayers : [""],
+          },
+        },
+      };
+    });
+  }
+
+  function handterSpillerInputKeyDown(
+    event: React.KeyboardEvent<HTMLInputElement>,
+    team: PetanqueTeamKey,
+    playerIdx: number
+  ) {
+    if (event.key !== "Enter") return;
+
+    const erSisteFelt = playerIdx === petanqueMatch.teams[team].players.length - 1;
+    if (!erSisteFelt) return;
+
+    const currentValue = petanqueMatch.teams[team].players[playerIdx]?.trim() ?? "";
+    if (!currentValue) return;
+
+    event.preventDefault();
+    leggTilPetanqueSpiller(team);
+
+    window.setTimeout(() => {
+      const nextInput = document.getElementById(
+        `petanque-${team}-player-${playerIdx + 1}`
+      ) as HTMLInputElement | null;
+      nextInput?.focus();
+    }, 0);
+  }
+
   function startPetanqueMatch() {
-    if (!canStartPetanqueMatch || !petanqueMatch.mode) return;
+    if (!canStartPetanqueMatch) return;
     const now = new Date().toISOString();
     const matchId =
       typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -457,15 +490,30 @@ export default function PetanquePage() {
       teams: {
         A: {
           ...prev.teams.A,
-          name: prev.teams.A.name.trim() || prev.teams.A.players.join(" / "),
-          players: prev.teams.A.players.map((p) => p.trim()),
+          players: prev.teams.A.players.map((p) => p.trim()).filter(Boolean),
         },
         B: {
           ...prev.teams.B,
-          name: prev.teams.B.name.trim() || prev.teams.B.players.join(" / "),
-          players: prev.teams.B.players.map((p) => p.trim()),
+          players: prev.teams.B.players.map((p) => p.trim()).filter(Boolean),
         },
       },
+    }));
+  }
+
+  function oppdaterTargetPoints(value: number) {
+    const safeValue = Number.isFinite(value)
+      ? Math.max(1, Math.round(value))
+      : DEFAULT_TARGET_POINTS;
+    setPetanqueMatch((prev) => ({
+      ...prev,
+      targetPoints: safeValue,
+    }));
+  }
+
+  function toggleIncludeInStats() {
+    setPetanqueMatch((prev) => ({
+      ...prev,
+      includeInStats: !prev.includeInStats,
     }));
   }
 
@@ -480,7 +528,7 @@ export default function PetanquePage() {
         ...prev.history,
         { team, points: 1, at: new Date().toISOString() },
       ];
-      const didWin = nextScore[team] >= PETANQUE_WIN_POINTS;
+      const didWin = nextScore[team] >= prev.targetPoints;
       return {
         ...prev,
         score: nextScore,
@@ -572,115 +620,156 @@ export default function PetanquePage() {
       <section className="relative z-10 px-6 pb-20 md:pb-28">
         <div className="max-w-4xl mx-auto space-y-6">
           {petanqueMatch.phase === "setup" && (
-            <>
-              <div className="space-y-4 rounded-3xl border-2 border-[#264653] bg-[#fff5df] p-5 shadow-[0_8px_0_0_#264653]">
-                <h3 className={`text-xl text-[#264653] ${headingFont.className}`}>
-                  Hvem skal kaste kuler i dag?
-                </h3>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {modeOptions.map((mode) => (
+            <div className="space-y-4 rounded-3xl border-2 border-[#264653] bg-[#fff5df] p-5 shadow-[0_8px_0_0_#264653]">
+              <h3 className={`text-xl text-[#264653] ${headingFont.className}`}>
+                Hvem skal kaste kuler i dag?
+              </h3>
+              <div className="grid gap-4 md:grid-cols-2">
+                {(["A", "B"] as const).map((team) => (
+                  <div
+                    key={team}
+                    className={`rounded-3xl border-2 p-4 ${
+                      team === "A"
+                        ? "border-[#E76F51] bg-[#fff1ea]"
+                        : "border-[#2A9D8F] bg-[#eaf9f7]"
+                    }`}
+                  >
+                    <h4 className={`mb-3 text-lg text-[#264653] ${headingFont.className}`}>Lag {team}</h4>
+
+                    <div className="space-y-3">
+                      {petanqueMatch.teams[team].players.map((playerName, idx) => (
+                        <div key={`${team}-${idx}`}>
+                          <label htmlFor={`petanque-${team}-player-${idx}`} className={labelClass}>
+                            Spiller {idx + 1}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              id={`petanque-${team}-player-${idx}`}
+                              type="text"
+                              value={playerName}
+                              onChange={(e) =>
+                                oppdaterPetanqueSpillernavn(team, idx, e.target.value)
+                              }
+                              onKeyDown={(e) => handterSpillerInputKeyDown(e, team, idx)}
+                              className={`${inputClass} min-h-[52px] text-base font-medium`}
+                              placeholder="Navn"
+                            />
+                            {petanqueMatch.teams[team].players.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => fjernPetanqueSpiller(team, idx)}
+                                className="inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full border-2 border-[#264653] bg-[#E9C46A] text-[#264653] shadow-[0_3px_0_0_#264653] transition-all hover:-translate-y-0.5 hover:bg-[#ddb85f]"
+                                aria-label={`Fjern spiller ${idx + 1} fra lag ${team}`}
+                              >
+                                <X className="h-5 w-5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
                     <button
-                      key={mode.id}
                       type="button"
-                      onClick={() => velgPetanqueMode(mode.id)}
-                      className={`rounded-3xl border-2 px-5 py-4 text-left transition-all ${
-                        petanqueMatch.mode === mode.id
-                          ? "border-[#264653] bg-[#2A9D8F] text-[#FDF6E3] shadow-[0_5px_0_0_#264653]"
-                          : "border-[#264653]/40 bg-[#fff9ee] text-[#264653] hover:-translate-y-0.5 hover:border-[#264653]"
+                      onClick={() => leggTilPetanqueSpiller(team)}
+                      className={addPlayerBtnClass}
+                    >
+                      + Legg til spiller
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-3xl border-2 border-[#264653] bg-[#fff9ee] p-3 shadow-[0_5px_0_0_#264653]">
+                <h4 className={`mb-2 text-base text-[#264653] ${headingFont.className}`}>
+                  Kamp-innstillinger
+                </h4>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={petanqueMatch.includeInStats}
+                    onClick={toggleIncludeInStats}
+                    className="flex min-h-[44px] grow items-center justify-between rounded-2xl border-2 border-[#264653] bg-[#FDF6E3] px-3 py-2 text-left sm:grow-0 sm:min-w-[240px]"
+                  >
+                    <p className="text-sm font-bold text-[#264653]">Tell med i statistikk</p>
+                    <span
+                      className={`relative inline-flex h-7 w-12 items-center rounded-full border-2 border-[#264653] transition-colors ${
+                        petanqueMatch.includeInStats ? "bg-[#2A9D8F]" : "bg-[#E9C46A]"
                       }`}
                     >
-                      <div className="mb-2 flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-sm">
-                          {Array.from({ length: PLAYERS_PER_MODE[mode.id] }).map((_, idx) => (
-                            <span key={idx} aria-hidden className="petanque-wobble">
-                              ⚫
-                            </span>
-                          ))}
-                        </span>
-                      </div>
-                      <p className="text-lg font-bold">{mode.label}</p>
-                      <p className="text-sm opacity-90">{mode.subtitle}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {petanqueMatch.mode && (
-                <div className="space-y-4 rounded-3xl border-2 border-[#264653] bg-[#fff5df] p-5 shadow-[0_8px_0_0_#264653]">
-                  <h3 className={`text-xl text-[#264653] ${headingFont.className}`}>
-                    Lag og spillere
-                  </h3>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {(["A", "B"] as const).map((team) => (
-                      <div
-                        key={team}
-                        className={`rounded-3xl border-2 p-4 ${
-                          team === "A"
-                            ? "border-[#E76F51] bg-[#fff1ea]"
-                            : "border-[#2A9D8F] bg-[#eaf9f7]"
+                      <span
+                        className={`inline-block h-[18px] w-[18px] transform rounded-full border-2 border-[#264653] bg-[#FDF6E3] transition-transform ${
+                          petanqueMatch.includeInStats ? "translate-x-6" : "translate-x-1"
                         }`}
-                      >
-                        <label
-                          htmlFor={`petanque-team-${team}-name`}
-                          className={labelClass}
-                        >
-                          Lag {team} (valgfritt)
-                        </label>
-                        <input
-                          id={`petanque-team-${team}-name`}
-                          type="text"
-                          value={petanqueMatch.teams[team].name}
-                          onChange={(e) => oppdaterPetanqueLagnavn(team, e.target.value)}
-                          className={inputClass}
-                          placeholder={`Lag ${team}`}
-                        />
+                      />
+                    </span>
+                  </button>
 
-                        <div className="mt-4 space-y-3">
-                          {Array.from({ length: playersPerTeam }).map((_, idx) => (
-                            <div key={`${team}-${idx}`}>
-                              <label
-                                htmlFor={`petanque-${team}-player-${idx}`}
-                                className={labelClass}
-                              >
-                                Spiller {idx + 1}
-                              </label>
-                              <input
-                                id={`petanque-${team}-player-${idx}`}
-                                type="text"
-                                value={petanqueMatch.teams[team].players[idx] ?? ""}
-                                onChange={(e) =>
-                                  oppdaterPetanqueSpillernavn(team, idx, e.target.value)
-                                }
-                                className={inputClass}
-                                placeholder="Navn"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="pt-2">
-                    <button
-                      type="button"
-                      onClick={startPetanqueMatch}
-                      disabled={!canStartPetanqueMatch}
-                      className={btnPrimary}
-                    >
-                      Start runden
-                    </button>
+                  <div className="flex min-h-[44px] grow items-center gap-2 rounded-2xl border-2 border-[#264653] bg-[#FDF6E3] px-3 py-2">
+                    <label className="text-sm font-bold text-[#264653] whitespace-nowrap" htmlFor="petanque-target-points">
+                      Spill til
+                    </label>
+                    <div className="flex flex-nowrap gap-1 overflow-x-auto">
+                      {[7, 11, 13].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => oppdaterTargetPoints(preset)}
+                          className={`rounded-full border-2 px-3 py-1.5 text-xs font-bold shadow-[0_2px_0_0_#264653] transition-all hover:-translate-y-0.5 ${
+                            petanqueMatch.targetPoints === preset
+                              ? "border-[#264653] bg-[#E76F51] text-[#FDF6E3]"
+                              : "border-[#264653] bg-[#E9C46A] text-[#264653]"
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      id="petanque-target-points"
+                      type="number"
+                      min={1}
+                      value={petanqueMatch.targetPoints}
+                      onChange={(e) =>
+                        oppdaterTargetPoints(
+                          e.target.value === ""
+                            ? DEFAULT_TARGET_POINTS
+                            : Number.parseInt(e.target.value, 10)
+                        )
+                      }
+                      className={`${inputClass} min-h-[40px] w-[78px] px-2 py-1 text-center text-sm font-semibold`}
+                    />
+                    <span className="text-xs font-semibold text-[#264653]/80">poeng</span>
                   </div>
                 </div>
-              )}
-            </>
+                {!petanqueMatch.includeInStats && (
+                  <p className="mt-2 text-xs text-[#264653]/70">
+                    Denne kampen er bare for moro skyld og lagres ikke.
+                  </p>
+                )}
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={startPetanqueMatch}
+                  disabled={!canStartPetanqueMatch}
+                  className={btnPrimary}
+                >
+                  Start runden
+                </button>
+              </div>
+            </div>
           )}
 
           {(petanqueMatch.phase === "playing" || petanqueMatch.phase === "finished") && (
             <div className="space-y-5 rounded-3xl border-2 border-[#264653] bg-[#fff5df] p-5 shadow-[0_8px_0_0_#264653]">
+              <p className="rounded-full border-2 border-[#264653] bg-[#E9C46A]/70 px-4 py-2 text-center text-sm font-bold text-[#264653]">
+                Først til {petanqueMatch.targetPoints}!
+              </p>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {(["A", "B"] as const).map((team) => {
                   const score = petanqueMatch.score[team];
-                  const progressPct = Math.min(100, (score / PETANQUE_WIN_POINTS) * 100);
+                  const progressPct = Math.min(100, (score / petanqueMatch.targetPoints) * 100);
                   const isTeamA = team === "A";
                   return (
                     <div
@@ -695,7 +784,7 @@ export default function PetanquePage() {
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-[#264653]/70">Lag {team}</p>
                           <p className="truncate text-base font-bold text-[#264653]">
-                            {petanqueMatch.teams[team].name}
+                            {formatTeamName(team)}
                           </p>
                         </div>
                         <div
@@ -767,7 +856,7 @@ export default function PetanquePage() {
                       Skål for vinneren!
                     </p>
                     <p className="mt-1 text-sm font-medium text-[#264653]/85">
-                      Vinner: {petanqueMatch.teams[petanqueMatch.winner].name} (
+                      Vinner: {formatTeamName(petanqueMatch.winner)} (
                       {petanqueMatch.score[petanqueMatch.winner]} poeng)
                     </p>
                     <p className="mt-1 text-xs text-[#264653]/70">
@@ -792,6 +881,11 @@ export default function PetanquePage() {
                       Lagret i resultatbanken ✅
                     </p>
                   )}
+                  {petanqueCloudStatus === "skipped" && (
+                    <p className="text-sm font-medium text-[#264653]/80" role="status">
+                      Denne kampen er bare for moro skyld og ble ikke lagret i statistikken.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -803,11 +897,6 @@ export default function PetanquePage() {
       <style jsx>{`
         .petanque-float {
           animation: petanqueFloat 3.2s ease-in-out infinite;
-        }
-
-        .petanque-wobble {
-          display: inline-block;
-          animation: petanqueWobble 2.8s ease-in-out infinite;
         }
 
         .petanque-pop {
@@ -824,19 +913,6 @@ export default function PetanquePage() {
           }
         }
 
-        @keyframes petanqueWobble {
-          0%,
-          100% {
-            transform: rotate(0deg);
-          }
-          25% {
-            transform: rotate(-8deg);
-          }
-          75% {
-            transform: rotate(8deg);
-          }
-        }
-
         @keyframes petanquePop {
           0%,
           100% {
@@ -849,7 +925,6 @@ export default function PetanquePage() {
 
         @media (prefers-reduced-motion: reduce) {
           .petanque-float,
-          .petanque-wobble,
           .petanque-pop {
             animation: none;
           }
