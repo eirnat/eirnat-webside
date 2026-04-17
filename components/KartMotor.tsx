@@ -1053,6 +1053,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'closed-road-outline',
       type: 'line',
       source: 'closed-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.closedRoadOutline,
         'line-width': 10
@@ -1063,6 +1067,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'closed-road-fill',
       type: 'line',
       source: 'closed-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.closedRoad,
         'line-width': 6
@@ -1073,6 +1081,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'reduced-road-outline',
       type: 'line',
       source: 'reduced-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.reducedRoadOutline,
         'line-width': 10
@@ -1083,6 +1095,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'reduced-road-fill',
       type: 'line',
       source: 'reduced-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.reducedRoad,
         'line-width': 6
@@ -1093,6 +1109,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'pedestrian-road-outline',
       type: 'line',
       source: 'pedestrian-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.pedestrianOutline,
         'line-width': 10
@@ -1103,6 +1123,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'pedestrian-road-fill',
       type: 'line',
       source: 'pedestrian-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.pedestrian,
         'line-width': 6
@@ -1113,6 +1137,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'detour-road-casing-layer',
       type: 'line',
       source: 'detour-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.detourOutline,
         'line-width': 9,
@@ -1124,6 +1152,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       id: 'detour-road-layer',
       type: 'line',
       source: 'detour-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
       paint: {
         'line-color': SVV_COLORS.detour,
         'line-width': 5
