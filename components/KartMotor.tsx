@@ -1938,9 +1938,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             if (!ctx) return;
 
             const dpr = window.devicePixelRatio || 1;
-            const { width, height } = mapInstance.getContainer().getBoundingClientRect();
-            exportCanvas.width = width * dpr;
-            exportCanvas.height = height * dpr;
+            const bounds = mapInstance.getContainer().getBoundingClientRect();
+            exportCanvas.width = bounds.width * dpr;
+            exportCanvas.height = bounds.height * dpr;
 
             // Legg hvit bakgrunn bak kartet for mer lesbart PNG-resultat.
             ctx.fillStyle = '#ffffff';
@@ -1973,68 +1973,36 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               ctx.drawImage(image, x, y, w, h);
             }
             const annotations = annotationsRef.current;
-            const wrapTextLines = (text: string, maxCharsPerLine = 30): string[] => {
-              const paragraphs = text.split('\n');
-              const wrapped: string[] = [];
-              for (const paragraph of paragraphs) {
-                const words = paragraph.trim().length > 0 ? paragraph.trim().split(/\s+/) : [''];
-                let currentLine = '';
-                for (const word of words) {
-                  if (!currentLine) {
-                    currentLine = word;
-                    continue;
-                  }
-                  const candidate = `${currentLine} ${word}`;
-                  if (candidate.length <= maxCharsPerLine) {
-                    currentLine = candidate;
-                  } else {
-                    wrapped.push(currentLine);
-                    currentLine = word;
-                  }
-                }
-                wrapped.push(currentLine);
-              }
-              return wrapped.length > 0 ? wrapped : [''];
-            };
             if (annotations.length > 0 && 'fonts' in document) {
               await document.fonts.ready;
             }
             for (const annotation of annotations) {
-              const projected = mapInstance.project(annotation.coordinates);
-              const x = projected.x * dpr;
-              const y = projected.y * dpr;
+              const point = mapInstance.project(annotation.coordinates);
+              const posX = point.x * dpr;
+              const posY = point.y * dpr;
               const fontSize = Math.max(10, annotation.size) * dpr;
               const fontWeight = annotation.backgroundStyle === 'white' ? 'normal' : 'bold';
-              const wrappedLines = wrapTextLines(annotation.text, 30);
+              const text = annotation.text ?? '';
+              const padding = 6 * dpr;
 
               ctx.save();
-              ctx.translate(x, y);
-              ctx.rotate((annotation.rotation * Math.PI) / 180);
-              ctx.font = `${fontWeight} ${fontSize}px Arial, sans-serif`;
+              ctx.translate(posX, posY);
+              ctx.rotate(((annotation.rotation || 0) * Math.PI) / 180);
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
-
-              const lineHeight = fontSize;
-              const textWidth = wrappedLines.reduce((max, line) => {
-                const lineWidth = ctx.measureText(line).width;
-                return Math.max(max, lineWidth);
-              }, 0);
-              const textHeight = wrappedLines.length * lineHeight;
+              ctx.font = `${fontWeight} ${fontSize}px Arial, sans-serif`;
+              const textWidth = ctx.measureText(text).width;
               if (annotation.backgroundStyle === 'white' || annotation.backgroundStyle === 'green') {
-                const padX = 10 * dpr;
-                const padY = 5 * dpr;
-                const boxW = textWidth + padX * 2;
-                const boxH = textHeight + padY * 2;
-                const boxX = -boxW / 2;
-                const boxY = -boxH / 2;
+                const boxWidth = textWidth + padding * 2;
+                const boxHeight = fontSize + padding * 2;
+                const rectX = -(textWidth + padding * 2) / 2;
+                const rectY = -(fontSize + padding * 2) / 2;
                 const radius =
                   annotation.backgroundStyle === 'green' ? 2 * dpr : 6 * dpr;
                 const borderWidth = annotation.backgroundStyle === 'green' ? 1 * dpr : 2 * dpr;
 
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
                 ctx.beginPath();
-                ctx.roundRect(boxX, boxY, boxW, boxH, radius);
+                ctx.roundRect(rectX, rectY, boxWidth, boxHeight, radius);
                 ctx.closePath();
                 if (annotation.backgroundStyle === 'green') {
                   ctx.fillStyle = ANNOTATION_EURO_GREEN;
@@ -2051,18 +2019,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
                 }
               }
 
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
               if (annotation.backgroundStyle === 'green') {
                 ctx.font = `bold ${fontSize}px Arial, sans-serif`;
               }
               ctx.fillStyle =
                 annotation.backgroundStyle === 'green' ? '#ffffff' : '#111827';
-              const startY = -textHeight / 2 + lineHeight / 2;
-              for (let i = 0; i < wrappedLines.length; i += 1) {
-                const lineY = startY + i * lineHeight;
-                ctx.fillText(wrappedLines[i], 0, lineY);
-              }
+              ctx.fillText(text, 0, 0);
               ctx.restore();
             }
 
@@ -2170,7 +2132,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         window.setTimeout(() => {
           if (captured) return;
           scheduleCapture();
-        }, 300);
+        }, 500);
       })();
     },
     exportMapData,
