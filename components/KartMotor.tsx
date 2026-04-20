@@ -1890,8 +1890,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     downloadAsPng: () => {
       void (async () => {
         const mapInstance = map.current;
-        const canvas = mapInstance?.getCanvas();
-        if (!mapInstance || !canvas) return;
+        if (!mapInstance) return;
 
         await fetchNvdbRoadNetwork();
 
@@ -1937,15 +1936,23 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           try {
             if (!ctx) return;
 
+            // 1. Bruk kartets faktiske canvas-størrelse for å unngå skaleringsfeil
             const dpr = window.devicePixelRatio || 1;
-            const bounds = mapInstance.getContainer().getBoundingClientRect();
-            exportCanvas.width = bounds.width * dpr;
-            exportCanvas.height = bounds.height * dpr;
+            const mapCanvas = mapInstance.getCanvas();
+            exportCanvas.width = mapCanvas.width;
+            exportCanvas.height = mapCanvas.height;
 
             // Legg hvit bakgrunn bak kartet for mer lesbart PNG-resultat.
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-            ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+            ctx.drawImage(mapCanvas, 0, 0);
+
+            // MapLibre project() gir CSS-piksler, mens exportCanvas er i canvas-piksler.
+            const canvasBounds = mapCanvas.getBoundingClientRect();
+            const scaleX = exportCanvas.width / canvasBounds.width;
+            const scaleY = exportCanvas.height / canvasBounds.height;
+            const scaleAvg = (scaleX + scaleY) / 2;
+
             const currentZoom = mapInstance.getZoom();
             for (const sign of closedSignsRef.current) {
               const image = signImageCacheRef.current[sign.kind];
@@ -1964,67 +1971,91 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               const nh = image.naturalHeight || 1;
               const aspectRatio = nw / nh;
 
-              const h = (baseHeight * targetScale) * dpr;
+              const h = (baseHeight * targetScale) * scaleAvg;
               const w = h * aspectRatio;
 
-              const x = projected.x * dpr - w / 2;
-              const y = projected.y * dpr - h / 2;
+              const x = projected.x * scaleX - w / 2;
+              const y = projected.y * scaleY - h / 2;
 
               ctx.drawImage(image, x, y, w, h);
             }
             const annotations = annotationsRef.current;
+            const wrapTextLines = (text: string, maxChars = 30): string[] => {
+              const paragraphs = text.split('\n');
+              const wrapped: string[] = [];
+              for (const paragraph of paragraphs) {
+                const words = paragraph.trim().length > 0 ? paragraph.trim().split(/\s+/) : [''];
+                let currentLine = '';
+                for (const word of words) {
+                  if (!currentLine) {
+                    currentLine = word;
+                    continue;
+                  }
+                  const candidate = `${currentLine} ${word}`;
+                  if (candidate.length <= maxChars) {
+                    currentLine = candidate;
+                  } else {
+                    wrapped.push(currentLine);
+                    currentLine = word;
+                  }
+                }
+                wrapped.push(currentLine);
+              }
+              return wrapped;
+            };
+
             if (annotations.length > 0 && 'fonts' in document) {
               await document.fonts.ready;
             }
             for (const annotation of annotations) {
               const point = mapInstance.project(annotation.coordinates);
-              const posX = point.x * dpr;
-              const posY = point.y * dpr;
+              const posX = point.x * scaleX;
+              const posY = point.y * scaleY;
               const fontSize = Math.max(10, annotation.size) * dpr;
-              const fontWeight = annotation.backgroundStyle === 'white' ? 'normal' : 'bold';
-              const text = annotation.text ?? '';
               const padding = 6 * dpr;
+              const lineHeight = fontSize * 1.1;
+              const lines = wrapTextLines(annotation.text || '', 30);
 
               ctx.save();
+              ctx.font = `${annotation.backgroundStyle === 'white' ? 'normal' : 'bold'} ${fontSize}px Arial, sans-serif`;
+              const maxLineWidth = Math.max(...lines.map((line) => ctx.measureText(line).width));
+              const totalTextHeight = lines.length * lineHeight;
+              const boxWidth = maxLineWidth + padding * 2;
+              const boxHeight = totalTextHeight + padding * 2;
+
               ctx.translate(posX, posY);
               ctx.rotate(((annotation.rotation || 0) * Math.PI) / 180);
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.font = `${fontWeight} ${fontSize}px Arial, sans-serif`;
-              const textWidth = ctx.measureText(text).width;
-              if (annotation.backgroundStyle === 'white' || annotation.backgroundStyle === 'green') {
-                const boxWidth = textWidth + padding * 2;
-                const boxHeight = fontSize + padding * 2;
-                const rectX = -(textWidth + padding * 2) / 2;
-                const rectY = -(fontSize + padding * 2) / 2;
+
+              if (annotation.backgroundStyle !== 'none') {
+                const rectX = -boxWidth / 2;
+                const rectY = -boxHeight / 2;
                 const radius =
                   annotation.backgroundStyle === 'green' ? 2 * dpr : 6 * dpr;
-                const borderWidth = annotation.backgroundStyle === 'green' ? 1 * dpr : 2 * dpr;
 
                 ctx.beginPath();
                 ctx.roundRect(rectX, rectY, boxWidth, boxHeight, radius);
-                ctx.closePath();
                 if (annotation.backgroundStyle === 'green') {
                   ctx.fillStyle = ANNOTATION_EURO_GREEN;
                   ctx.fill();
                   ctx.strokeStyle = '#ffffff';
-                  ctx.lineWidth = borderWidth;
-                  ctx.stroke();
+                  ctx.lineWidth = 1 * dpr;
                 } else {
                   ctx.fillStyle = '#ffffff';
                   ctx.fill();
                   ctx.strokeStyle = '#000000';
-                  ctx.lineWidth = borderWidth;
-                  ctx.stroke();
+                  ctx.lineWidth = 2 * dpr;
                 }
+                ctx.stroke();
               }
 
-              if (annotation.backgroundStyle === 'green') {
-                ctx.font = `bold ${fontSize}px Arial, sans-serif`;
-              }
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
               ctx.fillStyle =
                 annotation.backgroundStyle === 'green' ? '#ffffff' : '#111827';
-              ctx.fillText(text, 0, 0);
+              lines.forEach((line, index) => {
+                const lineY = -(totalTextHeight / 2) + index * lineHeight + lineHeight / 2;
+                ctx.fillText(line, 0, lineY);
+              });
               ctx.restore();
             }
 
