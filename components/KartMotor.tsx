@@ -69,6 +69,9 @@ type ActionCategory =
   | 'pedestrian-segment'
   | 'closed-sign'
   | 'detour-segment'
+  | 'closed-point'
+  | 'reduced-point'
+  | 'pedestrian-point'
   | 'detour-point'
   | 'annotation';
 type ActionHistoryItem =
@@ -307,6 +310,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const activeToolRef = useRef<ActiveTool>('none');
+  const closedPointsRef = useRef<Position[]>([]);
+  const reducedPointsRef = useRef<Position[]>([]);
+  const pedestrianPointsRef = useRef<Position[]>([]);
   const detourPointsRef = useRef<Position[]>([]);
   const detourFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const closedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
@@ -667,6 +673,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const clearAllDrawings = () => {
+    closedPointsRef.current = [];
+    reducedPointsRef.current = [];
+    pedestrianPointsRef.current = [];
     detourPointsRef.current = [];
     detourFeaturesRef.current = [];
     closedRoadFeaturesRef.current = [];
@@ -730,6 +739,20 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const syncClosedSources = () => {
+    const freeDrawFeature =
+      closedPointsRef.current.length >= 2
+        ? [
+            {
+              type: 'Feature' as const,
+              properties: { kind: 'closed-free' },
+              geometry: {
+                type: 'LineString' as const,
+                coordinates: closedPointsRef.current
+              }
+            }
+          ]
+        : [];
+
     const signFeatures: GeoJSON.Feature<GeoJSON.Point>[] = closedSignsRef.current.map((s) => ({
       type: 'Feature',
       properties: { id: s.id, kind: s.kind } as GeoJSON.GeoJsonProperties,
@@ -738,7 +761,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     updateSourceData('closed-road', {
       type: 'FeatureCollection',
-      features: closedRoadFeaturesRef.current
+      features: [...closedRoadFeaturesRef.current, ...freeDrawFeature]
     });
     updateSourceData('closed-signs', {
       type: 'FeatureCollection',
@@ -748,17 +771,45 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const syncReducedSource = () => {
+    const freeDrawFeature =
+      reducedPointsRef.current.length >= 2
+        ? [
+            {
+              type: 'Feature' as const,
+              properties: { kind: 'reduced-free' },
+              geometry: {
+                type: 'LineString' as const,
+                coordinates: reducedPointsRef.current
+              }
+            }
+          ]
+        : [];
+
     updateSourceData('reduced-road', {
       type: 'FeatureCollection',
-      features: reducedRoadFeaturesRef.current
+      features: [...reducedRoadFeaturesRef.current, ...freeDrawFeature]
     });
     setLegendRenderVersion((prev) => prev + 1);
   };
 
   const syncPedestrianSource = () => {
+    const freeDrawFeature =
+      pedestrianPointsRef.current.length >= 2
+        ? [
+            {
+              type: 'Feature' as const,
+              properties: { kind: 'pedestrian-free' },
+              geometry: {
+                type: 'LineString' as const,
+                coordinates: pedestrianPointsRef.current
+              }
+            }
+          ]
+        : [];
+
     updateSourceData('pedestrian-road', {
       type: 'FeatureCollection',
-      features: pedestrianFeaturesRef.current
+      features: [...pedestrianFeaturesRef.current, ...freeDrawFeature]
     });
     setLegendRenderVersion((prev) => prev + 1);
   };
@@ -1300,6 +1351,24 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (lastAction.category === 'detour-point') {
         detourPointsRef.current = detourPointsRef.current.slice(0, -1);
         syncDetourSource();
+        return;
+      }
+
+      if (lastAction.category === 'closed-point') {
+        closedPointsRef.current = closedPointsRef.current.slice(0, -1);
+        syncClosedSources();
+        return;
+      }
+
+      if (lastAction.category === 'reduced-point') {
+        reducedPointsRef.current = reducedPointsRef.current.slice(0, -1);
+        syncReducedSource();
+        return;
+      }
+
+      if (lastAction.category === 'pedestrian-point') {
+        pedestrianPointsRef.current = pedestrianPointsRef.current.slice(0, -1);
+        syncPedestrianSource();
         return;
       }
 
@@ -2161,6 +2230,27 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         detourPointsRef.current = [...detourPointsRef.current, clickedPosition];
         actionHistoryRef.current.push({ type: 'add', category: 'detour-point' });
         syncDetourSource();
+        return;
+      }
+
+      if (activeToolRef.current === 'closed') {
+        closedPointsRef.current = [...closedPointsRef.current, clickedPosition];
+        actionHistoryRef.current.push({ type: 'add', category: 'closed-point' });
+        syncClosedSources();
+        return;
+      }
+
+      if (activeToolRef.current === 'reduced') {
+        reducedPointsRef.current = [...reducedPointsRef.current, clickedPosition];
+        actionHistoryRef.current.push({ type: 'add', category: 'reduced-point' });
+        syncReducedSource();
+        return;
+      }
+
+      if (activeToolRef.current === 'pedestrian') {
+        pedestrianPointsRef.current = [...pedestrianPointsRef.current, clickedPosition];
+        actionHistoryRef.current.push({ type: 'add', category: 'pedestrian-point' });
+        syncPedestrianSource();
       }
     });
 
