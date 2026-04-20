@@ -26,6 +26,7 @@ export default function LagKartPage() {
   const mapRef = useRef<KartMotorHandle | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [activeTool, setActiveTool] = useState<ActiveTool>("none");
+  const [isManualMode, setIsManualMode] = useState(false);
   const [onClear, setOnClear] = useState(0);
   const [onUndo, setOnUndo] = useState(0);
   const [showLegend, setShowLegend] = useState(true);
@@ -161,6 +162,32 @@ export default function LagKartPage() {
               <div className="mb-2 text-xs font-bold tracking-wide text-slate-500">
                 VERKTØY
               </div>
+              <label
+                htmlFor="manual-mode-desktop"
+                className="mb-3 flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700"
+              >
+                <input
+                  id="manual-mode-desktop"
+                  type="checkbox"
+                  checked={isManualMode}
+                  onChange={(event) => setIsManualMode(event.target.checked)}
+                  className="peer sr-only"
+                />
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                    isManualMode
+                      ? "border-blue-600 bg-blue-600"
+                      : "border-slate-300 bg-white"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                      isManualMode ? "bg-white" : "bg-transparent"
+                    }`}
+                  />
+                </span>
+                <span>Frihåndstegning</span>
+              </label>
               <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-4 gap-1">
                   <button
@@ -387,6 +414,32 @@ export default function LagKartPage() {
           {/* Mobil: prioritert rad øverst, resten under i samme scroll (aside) */}
           <div className="flex flex-col lg:hidden">
             <div className="mb-4 flex w-full shrink-0 flex-col gap-2">
+              <label
+                htmlFor="manual-mode-mobile"
+                className="flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700"
+              >
+                <input
+                  id="manual-mode-mobile"
+                  type="checkbox"
+                  checked={isManualMode}
+                  onChange={(event) => setIsManualMode(event.target.checked)}
+                  className="peer sr-only"
+                />
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                    isManualMode
+                      ? "border-blue-600 bg-blue-600"
+                      : "border-slate-300 bg-white"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                      isManualMode ? "bg-white" : "bg-transparent"
+                    }`}
+                  />
+                </span>
+                <span>Frihåndstegning</span>
+              </label>
               <div className="grid grid-cols-5 gap-2">
                 <button
                   type="button"
@@ -652,6 +705,7 @@ export default function LagKartPage() {
             ref={mapRef as never}
             mapStyle={mapStyle}
             activeTool={activeTool}
+            manualModeEnabled={isManualMode}
             onClear={onClear}
             onUndo={onUndo}
             editingAnnotation={editingAnnotation}

@@ -31,6 +31,7 @@ export type ActiveTool =
 type KartMotorProps = {
   mapStyle: 'dataviz' | 'streets';
   activeTool: ActiveTool;
+  manualModeEnabled: boolean;
   onClear: number;
   onUndo: number;
   editingAnnotation: { id: string; text: string; size: number; rotation: number; coordinates: Position; backgroundStyle: AnnotationBackgroundStyle } | null;
@@ -63,24 +64,24 @@ type LegendRow = {
   casingColor: string;
   mainColor: string;
 };
+type ManualLine = { id: string; color: string; points: Position[] };
 type ActionCategory =
   | 'closed-segment'
   | 'reduced-segment'
   | 'pedestrian-segment'
   | 'closed-sign'
   | 'detour-segment'
-  | 'closed-point'
-  | 'reduced-point'
-  | 'pedestrian-point'
-  | 'detour-point'
+  | 'manual-line'
   | 'annotation';
 type ActionHistoryItem =
-  | { type: 'add'; category: ActionCategory }
+  | { type: 'add'; category: Exclude<ActionCategory, 'manual-line'> }
+  | { type: 'add'; category: 'manual-line'; id: string }
   | { type: 'delete'; category: 'closed-sign'; data: SignPlacement }
   | { type: 'delete'; category: 'closed-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
   | { type: 'delete'; category: 'reduced-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
   | { type: 'delete'; category: 'pedestrian-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
-  | { type: 'delete'; category: 'detour-segment'; data: GeoJSON.Feature<GeoJSON.LineString> };
+  | { type: 'delete'; category: 'detour-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
+  | { type: 'delete'; category: 'manual-line'; data: ManualLine };
 
 type FeatureCollection = GeoJSON.FeatureCollection<GeoJSON.Geometry>;
 type MapProjectData = {
@@ -95,7 +96,13 @@ type MapProjectData = {
   reducedRoadFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
   pedestrianFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
   detourFeatures: GeoJSON.Feature<GeoJSON.LineString>[];
-  detourPoints: Position[];
+  manualLines?: ManualLine[];
+  /** Legacy project format fallback. */
+  closedManualSegments?: Position[][];
+  reducedManualSegments?: Position[][];
+  pedestrianManualSegments?: Position[][];
+  detourManualSegments?: Position[][];
+  detourPoints?: Position[];
   annotations: Annotation[];
 };
 
@@ -157,6 +164,7 @@ const getActiveLegendRows = (
 
 /** Samme som normalisert bredde/høyde i loadSignAssets (px). */
 const CLOSED_SIGN_PNG_BASE_SIZE = 128;
+const SNAP_ENDPOINT_DISTANCE_PX = 20;
 
 function drawAnnotationBackgroundBox() {
   const size = 32;
@@ -303,17 +311,26 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
 };
 
 const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function KartMotor(
-  { mapStyle, activeTool, onClear, onUndo, editingAnnotation, onEditingAnnotationChange, showLegend, onTextAnnotationCreated },
+  {
+    mapStyle,
+    activeTool,
+    manualModeEnabled,
+    onClear,
+    onUndo,
+    editingAnnotation,
+    onEditingAnnotationChange,
+    showLegend,
+    onTextAnnotationCreated
+  },
   ref
 ) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const activeToolRef = useRef<ActiveTool>('none');
-  const closedPointsRef = useRef<Position[]>([]);
-  const reducedPointsRef = useRef<Position[]>([]);
-  const pedestrianPointsRef = useRef<Position[]>([]);
-  const detourPointsRef = useRef<Position[]>([]);
+  const manualLinesRef = useRef<ManualLine[]>([]);
+  const activeManualLineIdRef = useRef<string | null>(null);
+  const isManualModeRef = useRef(false);
   const detourFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const closedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const reducedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
@@ -357,6 +374,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   useEffect(() => {
     activeToolRef.current = activeTool;
   }, [activeTool]);
+
+  useEffect(() => {
+    isManualModeRef.current = manualModeEnabled;
+  }, [manualModeEnabled]);
 
   useEffect(() => {
     const styleId = 'kartmotor-popup-zindex-style';
@@ -409,6 +430,147 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       return String(candidate);
     }
     return null;
+  };
+
+  const getManualColorForTool = (tool: ActiveTool): string | null => {
+    if (tool === 'closed') return SVV_COLORS.closedRoad;
+    if (tool === 'reduced') return SVV_COLORS.reducedRoad;
+    if (tool === 'pedestrian') return SVV_COLORS.pedestrian;
+    if (tool === 'detour') return SVV_COLORS.detour;
+    return null;
+  };
+
+  const finishActiveManualLine = () => {
+    activeManualLineIdRef.current = null;
+  };
+
+  const getSnappedPoint = (clickedPosition: Position): Position => {
+    const mapInstance = map.current;
+    if (!mapInstance) return clickedPosition;
+
+    const clickedPx = mapInstance.project(clickedPosition);
+    let bestPoint: Position | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    const tryEndpoint = (endpoint: Position) => {
+      const endpointPx = mapInstance.project(endpoint);
+      const distance = Math.hypot(endpointPx.x - clickedPx.x, endpointPx.y - clickedPx.y);
+      if (distance > SNAP_ENDPOINT_DISTANCE_PX) return;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestPoint = endpoint;
+      }
+    };
+
+    const tryFeatureEndpoints = (feature: GeoJSON.Feature<GeoJSON.LineString> | null | undefined) => {
+      if (!feature) return;
+      const coordinates = feature.geometry.coordinates as Position[];
+      if (coordinates.length === 0) return;
+      tryEndpoint(coordinates[0]);
+      if (coordinates.length > 1) {
+        tryEndpoint(coordinates[coordinates.length - 1]);
+      }
+    };
+
+    const tryManualLine = (line: ManualLine) => {
+      if (line.points.length === 0) return;
+      tryEndpoint(line.points[0]);
+      if (line.points.length > 1) {
+        tryEndpoint(line.points[line.points.length - 1]);
+      }
+    };
+
+    Array.from(roadCacheRef.current.values()).forEach(tryFeatureEndpoints);
+    closedRoadFeaturesRef.current.forEach(tryFeatureEndpoints);
+    reducedRoadFeaturesRef.current.forEach(tryFeatureEndpoints);
+    pedestrianFeaturesRef.current.forEach(tryFeatureEndpoints);
+    detourFeaturesRef.current.forEach(tryFeatureEndpoints);
+    manualLinesRef.current.forEach(tryManualLine);
+
+    if (!bestPoint) return clickedPosition;
+    return [bestPoint[0], bestPoint[1]];
+  };
+
+  const getOrCreateActiveManualLine = (color: string, startPoint: Position): ManualLine => {
+    const activeId = activeManualLineIdRef.current;
+    if (activeId) {
+      const existing = manualLinesRef.current.find((line) => line.id === activeId);
+      if (existing) return existing;
+    }
+
+    const nextLine: ManualLine = {
+      id: crypto.randomUUID(),
+      color,
+      points: [startPoint]
+    };
+    manualLinesRef.current = [...manualLinesRef.current, nextLine];
+    activeManualLineIdRef.current = nextLine.id;
+    return nextLine;
+  };
+
+  const appendPointToActiveManualLine = (point: Position, color: string): string => {
+    const activeLine = getOrCreateActiveManualLine(color, point);
+    const nextLines = manualLinesRef.current.map((line) => {
+      if (line.id !== activeLine.id) return line;
+      // Avoid duplicate points when snapping to same endpoint repeatedly.
+      const lastPoint = line.points[line.points.length - 1];
+      if (lastPoint && lastPoint[0] === point[0] && lastPoint[1] === point[1]) {
+        return line;
+      }
+      return { ...line, points: [...line.points, point] };
+    });
+    manualLinesRef.current = nextLines;
+    return activeLine.id;
+  };
+
+  const syncManualLinesSource = () => {
+    const manualFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = manualLinesRef.current
+      .filter((line) => line.points.length >= 2)
+      .map((line) => ({
+        type: 'Feature',
+        properties: { id: line.id, color: line.color, kind: 'manual-line' },
+        geometry: {
+          type: 'LineString',
+          coordinates: line.points
+        }
+      }));
+
+    updateSourceData('manual-lines-source', {
+      type: 'FeatureCollection',
+      features: manualFeatures
+    });
+    setLegendRenderVersion((prev) => prev + 1);
+  };
+
+  const removeManualLineById = (lineId: string): ManualLine | null => {
+    const line = manualLinesRef.current.find((item) => item.id === lineId) ?? null;
+    if (!line) return null;
+    manualLinesRef.current = manualLinesRef.current.filter((item) => item.id !== lineId);
+    if (activeManualLineIdRef.current === lineId) {
+      activeManualLineIdRef.current = null;
+    }
+    return line;
+  };
+
+  const undoManualLineAdd = (lineId: string) => {
+    const line = manualLinesRef.current.find((item) => item.id === lineId);
+    if (!line) return;
+
+    const isLineActive = activeManualLineIdRef.current === lineId;
+    if (!isLineActive) {
+      manualLinesRef.current = manualLinesRef.current.filter((item) => item.id !== lineId);
+      return;
+    }
+
+    if (line.points.length <= 1) {
+      manualLinesRef.current = manualLinesRef.current.filter((item) => item.id !== lineId);
+      activeManualLineIdRef.current = null;
+      return;
+    }
+
+    manualLinesRef.current = manualLinesRef.current.map((item) =>
+      item.id === lineId ? { ...item, points: item.points.slice(0, -1) } : item
+    );
   };
 
   const updateSourceData = (sourceId: string, data: FeatureCollection) => {
@@ -673,10 +835,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const clearAllDrawings = () => {
-    closedPointsRef.current = [];
-    reducedPointsRef.current = [];
-    pedestrianPointsRef.current = [];
-    detourPointsRef.current = [];
+    manualLinesRef.current = [];
+    activeManualLineIdRef.current = null;
     detourFeaturesRef.current = [];
     closedRoadFeaturesRef.current = [];
     reducedRoadFeaturesRef.current = [];
@@ -690,6 +850,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     updateSourceData('reduced-road', emptyFeatureCollection());
     updateSourceData('pedestrian-road', emptyFeatureCollection());
     updateSourceData('detour-road', emptyFeatureCollection());
+    updateSourceData('manual-lines-source', emptyFeatureCollection());
     updateSourceData('closed-signs', emptyFeatureCollection());
     updateSourceData('annotations-source', emptyFeatureCollection());
     removeAllAnnotationMarkers();
@@ -717,42 +878,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const syncDetourSource = () => {
-    const freeDrawFeature =
-      detourPointsRef.current.length >= 2
-        ? [
-            {
-              type: 'Feature' as const,
-              properties: { kind: 'detour-free' },
-              geometry: {
-                type: 'LineString' as const,
-                coordinates: detourPointsRef.current
-              }
-            }
-          ]
-        : [];
-
     updateSourceData('detour-road', {
       type: 'FeatureCollection',
-      features: [...detourFeaturesRef.current, ...freeDrawFeature]
+      features: detourFeaturesRef.current
     });
     setLegendRenderVersion((prev) => prev + 1);
   };
 
   const syncClosedSources = () => {
-    const freeDrawFeature =
-      closedPointsRef.current.length >= 2
-        ? [
-            {
-              type: 'Feature' as const,
-              properties: { kind: 'closed-free' },
-              geometry: {
-                type: 'LineString' as const,
-                coordinates: closedPointsRef.current
-              }
-            }
-          ]
-        : [];
-
     const signFeatures: GeoJSON.Feature<GeoJSON.Point>[] = closedSignsRef.current.map((s) => ({
       type: 'Feature',
       properties: { id: s.id, kind: s.kind } as GeoJSON.GeoJsonProperties,
@@ -761,7 +894,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     updateSourceData('closed-road', {
       type: 'FeatureCollection',
-      features: [...closedRoadFeaturesRef.current, ...freeDrawFeature]
+      features: closedRoadFeaturesRef.current
     });
     updateSourceData('closed-signs', {
       type: 'FeatureCollection',
@@ -771,45 +904,17 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   };
 
   const syncReducedSource = () => {
-    const freeDrawFeature =
-      reducedPointsRef.current.length >= 2
-        ? [
-            {
-              type: 'Feature' as const,
-              properties: { kind: 'reduced-free' },
-              geometry: {
-                type: 'LineString' as const,
-                coordinates: reducedPointsRef.current
-              }
-            }
-          ]
-        : [];
-
     updateSourceData('reduced-road', {
       type: 'FeatureCollection',
-      features: [...reducedRoadFeaturesRef.current, ...freeDrawFeature]
+      features: reducedRoadFeaturesRef.current
     });
     setLegendRenderVersion((prev) => prev + 1);
   };
 
   const syncPedestrianSource = () => {
-    const freeDrawFeature =
-      pedestrianPointsRef.current.length >= 2
-        ? [
-            {
-              type: 'Feature' as const,
-              properties: { kind: 'pedestrian-free' },
-              geometry: {
-                type: 'LineString' as const,
-                coordinates: pedestrianPointsRef.current
-              }
-            }
-          ]
-        : [];
-
     updateSourceData('pedestrian-road', {
       type: 'FeatureCollection',
-      features: [...pedestrianFeaturesRef.current, ...freeDrawFeature]
+      features: pedestrianFeaturesRef.current
     });
     setLegendRenderVersion((prev) => prev + 1);
   };
@@ -820,6 +925,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     syncReducedSource();
     syncPedestrianSource();
     syncDetourSource();
+    syncManualLinesSource();
     if (roadCacheRef.current.size > 0) {
       updateSourceData('nvdb-source', {
         type: 'FeatureCollection',
@@ -852,6 +958,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'annotations-bg-white',
       'annotations-bg-green',
       'closed-sign-layer',
+      'manual-line-fill',
+      'manual-line-outline',
       'detour-road-layer',
       'detour-road-casing-layer',
       'pedestrian-road-fill',
@@ -963,6 +1071,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'annotations-bg-green',
       'annotations-layer',
       'closed-sign-layer',
+      'manual-line-fill',
+      'manual-line-outline',
       'detour-road-layer',
       'detour-road-casing-layer',
       'pedestrian-road-fill',
@@ -982,6 +1092,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'pedestrian-road',
       'reduced-road',
       'closed-road',
+      'manual-lines-source',
       'nvdb-source'
     ];
 
@@ -1036,6 +1147,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addSource('annotations-source', {
+      type: 'geojson',
+      data: emptyFeatureCollection()
+    });
+
+    mapInstance.addSource('manual-lines-source', {
       type: 'geojson',
       data: emptyFeatureCollection()
     });
@@ -1115,20 +1231,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addLayer({
-      id: 'closed-road-fill',
-      type: 'line',
-      source: 'closed-road',
-      layout: {
-        'line-join': 'round',
-        'line-cap': 'round'
-      },
-      paint: {
-        'line-color': SVV_COLORS.closedRoad,
-        'line-width': 6
-      }
-    });
-
-    mapInstance.addLayer({
       id: 'reduced-road-outline',
       type: 'line',
       source: 'reduced-road',
@@ -1143,20 +1245,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addLayer({
-      id: 'reduced-road-fill',
-      type: 'line',
-      source: 'reduced-road',
-      layout: {
-        'line-join': 'round',
-        'line-cap': 'round'
-      },
-      paint: {
-        'line-color': SVV_COLORS.reducedRoad,
-        'line-width': 6
-      }
-    });
-
-    mapInstance.addLayer({
       id: 'pedestrian-road-outline',
       type: 'line',
       source: 'pedestrian-road',
@@ -1167,20 +1255,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       paint: {
         'line-color': SVV_COLORS.pedestrianOutline,
         'line-width': 10
-      }
-    });
-
-    mapInstance.addLayer({
-      id: 'pedestrian-road-fill',
-      type: 'line',
-      source: 'pedestrian-road',
-      layout: {
-        'line-join': 'round',
-        'line-cap': 'round'
-      },
-      paint: {
-        'line-color': SVV_COLORS.pedestrian,
-        'line-width': 6
       }
     });
 
@@ -1200,6 +1274,74 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addLayer({
+      id: 'manual-line-outline',
+      type: 'line',
+      source: 'manual-lines-source',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': [
+          'match',
+          ['get', 'color'],
+          SVV_COLORS.closedRoad,
+          SVV_COLORS.closedRoadOutline,
+          SVV_COLORS.reducedRoad,
+          SVV_COLORS.reducedRoadOutline,
+          SVV_COLORS.pedestrian,
+          SVV_COLORS.pedestrianOutline,
+          SVV_COLORS.detour,
+          SVV_COLORS.detourOutline,
+          '#374151'
+        ],
+        'line-width': 10
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'closed-road-fill',
+      type: 'line',
+      source: 'closed-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': SVV_COLORS.closedRoad,
+        'line-width': 6
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'reduced-road-fill',
+      type: 'line',
+      source: 'reduced-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': SVV_COLORS.reducedRoad,
+        'line-width': 6
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'pedestrian-road-fill',
+      type: 'line',
+      source: 'pedestrian-road',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': SVV_COLORS.pedestrian,
+        'line-width': 6
+      }
+    });
+
+    mapInstance.addLayer({
       id: 'detour-road-layer',
       type: 'line',
       source: 'detour-road',
@@ -1210,6 +1352,20 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       paint: {
         'line-color': SVV_COLORS.detour,
         'line-width': 5
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'manual-line-fill',
+      type: 'line',
+      source: 'manual-lines-source',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': ['coalesce', ['get', 'color'], '#111111'],
+        'line-width': 6
       }
     });
 
@@ -1348,27 +1504,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         return;
       }
 
-      if (lastAction.category === 'detour-point') {
-        detourPointsRef.current = detourPointsRef.current.slice(0, -1);
-        syncDetourSource();
-        return;
-      }
-
-      if (lastAction.category === 'closed-point') {
-        closedPointsRef.current = closedPointsRef.current.slice(0, -1);
-        syncClosedSources();
-        return;
-      }
-
-      if (lastAction.category === 'reduced-point') {
-        reducedPointsRef.current = reducedPointsRef.current.slice(0, -1);
-        syncReducedSource();
-        return;
-      }
-
-      if (lastAction.category === 'pedestrian-point') {
-        pedestrianPointsRef.current = pedestrianPointsRef.current.slice(0, -1);
-        syncPedestrianSource();
+      if (lastAction.category === 'manual-line') {
+        undoManualLineAdd(lastAction.id);
+        syncManualLinesSource();
         return;
       }
 
@@ -1424,6 +1562,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (lastAction.category === 'detour-segment') {
         detourFeaturesRef.current = [...detourFeaturesRef.current, lastAction.data];
         syncDetourSource();
+        return;
+      }
+
+      if (lastAction.category === 'manual-line') {
+        manualLinesRef.current = [...manualLinesRef.current, lastAction.data];
+        syncManualLinesSource();
       }
     }
   };
@@ -1594,11 +1738,45 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
   };
 
-  const normalizeDetourPoints = (value: unknown): Position[] => {
+  const normalizeManualLinePoints = (value: unknown): Position[] => {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((coordinate): coordinate is Position => isPosition(coordinate))
+      .map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])] as Position);
+  };
+
+  const normalizeManualLines = (value: unknown): ManualLine[] => {
+    if (!Array.isArray(value)) return [];
+    const normalized: ManualLine[] = [];
+    value.forEach((item) => {
+      const line = item as { id?: unknown; color?: unknown; points?: unknown };
+      if (typeof line?.color !== 'string') return;
+      const points = normalizeManualLinePoints(line.points);
+      if (points.length === 0) return;
+      normalized.push({
+        id: typeof line.id === 'string' && line.id.length > 0 ? line.id : crypto.randomUUID(),
+        color: line.color,
+        points
+      });
+    });
+    return normalized;
+  };
+
+  const normalizeLegacyPointsAsSingleSegment = (value: unknown): Position[] => {
     if (!Array.isArray(value)) return [];
     return value
       .filter((point): point is Position => isPosition(point))
       .map((point) => [Number(point[0]), Number(point[1])] as Position);
+  };
+
+  const legacySegmentsToManualLines = (segments: Position[][], color: string): ManualLine[] => {
+    return segments
+      .filter((segment) => segment.length > 0)
+      .map((segment) => ({
+        id: crypto.randomUUID(),
+        color,
+        points: segment
+      }));
   };
 
   const exportMapData = () => {
@@ -1618,7 +1796,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       reducedRoadFeatures: reducedRoadFeaturesRef.current,
       pedestrianFeatures: pedestrianFeaturesRef.current,
       detourFeatures: detourFeaturesRef.current,
-      detourPoints: detourPointsRef.current,
+      manualLines: manualLinesRef.current,
       annotations: annotationsRef.current
     };
 
@@ -1642,7 +1820,20 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       const nextReducedRoadFeatures = normalizeLineFeatures(parsed.reducedRoadFeatures, 'reduced-road');
       const nextPedestrianFeatures = normalizeLineFeatures(parsed.pedestrianFeatures, 'pedestrian-road');
       const nextDetourFeatures = normalizeLineFeatures(parsed.detourFeatures, 'detour-road');
-      const nextDetourPoints = normalizeDetourPoints(parsed.detourPoints);
+      const nextManualLines = normalizeManualLines(parsed.manualLines);
+      const closedLegacySegments = Array.isArray(parsed.closedManualSegments)
+        ? parsed.closedManualSegments.map((segment) => normalizeManualLinePoints(segment))
+        : [];
+      const reducedLegacySegments = Array.isArray(parsed.reducedManualSegments)
+        ? parsed.reducedManualSegments.map((segment) => normalizeManualLinePoints(segment))
+        : [];
+      const pedestrianLegacySegments = Array.isArray(parsed.pedestrianManualSegments)
+        ? parsed.pedestrianManualSegments.map((segment) => normalizeManualLinePoints(segment))
+        : [];
+      const detourLegacySegments = Array.isArray(parsed.detourManualSegments)
+        ? parsed.detourManualSegments.map((segment) => normalizeManualLinePoints(segment))
+        : [];
+      const detourLegacyPoints = normalizeLegacyPointsAsSingleSegment(parsed.detourPoints);
       const nextAnnotations = normalizeAnnotations(parsed.annotations);
 
       closedSignsRef.current = nextClosedSigns;
@@ -1650,7 +1841,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       reducedRoadFeaturesRef.current = nextReducedRoadFeatures;
       pedestrianFeaturesRef.current = nextPedestrianFeatures;
       detourFeaturesRef.current = nextDetourFeatures;
-      detourPointsRef.current = nextDetourPoints;
+      manualLinesRef.current =
+        nextManualLines.length > 0
+          ? nextManualLines
+          : [
+              ...legacySegmentsToManualLines(closedLegacySegments, SVV_COLORS.closedRoad),
+              ...legacySegmentsToManualLines(reducedLegacySegments, SVV_COLORS.reducedRoad),
+              ...legacySegmentsToManualLines(pedestrianLegacySegments, SVV_COLORS.pedestrian),
+              ...legacySegmentsToManualLines(detourLegacySegments, SVV_COLORS.detour),
+              ...(detourLegacyPoints.length > 0
+                ? [{ id: crypto.randomUUID(), color: SVV_COLORS.detour, points: detourLegacyPoints }]
+                : [])
+            ];
+      activeManualLineIdRef.current = null;
       actionHistoryRef.current = [];
       lastEditingAnnotationSentRef.current = null;
       setEditingAnnotationId(null);
@@ -1659,7 +1862,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
       syncClosedSources();
       syncReducedSource();
+      syncPedestrianSource();
       syncDetourSource();
+      syncManualLinesSource();
 
       const view = parsed.view as { center?: unknown; zoom?: unknown } | undefined;
       if (view && isPosition(view.center) && Number.isFinite(Number(view.zoom)) && map.current) {
@@ -1861,10 +2066,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               ctx.restore();
             }
 
-            const hasClosedLegend = closedRoadFeaturesRef.current.length > 0;
-            const hasReducedLegend = reducedRoadFeaturesRef.current.length > 0;
-            const hasPedestrianLegend = pedestrianFeaturesRef.current.length > 0;
-            const hasDetourLegend = detourFeaturesRef.current.length > 0;
+            const hasClosedLegend =
+              closedRoadFeaturesRef.current.length > 0 ||
+              manualLinesRef.current.some((line) => line.color === SVV_COLORS.closedRoad && line.points.length >= 2);
+            const hasReducedLegend =
+              reducedRoadFeaturesRef.current.length > 0 ||
+              manualLinesRef.current.some((line) => line.color === SVV_COLORS.reducedRoad && line.points.length >= 2);
+            const hasPedestrianLegend =
+              pedestrianFeaturesRef.current.length > 0 ||
+              manualLinesRef.current.some((line) => line.color === SVV_COLORS.pedestrian && line.points.length >= 2);
+            const hasDetourLegend =
+              detourFeaturesRef.current.length > 0 ||
+              manualLinesRef.current.some((line) => line.color === SVV_COLORS.detour && line.points.length >= 2);
             const activeLegendRows = getActiveLegendRows(
               hasClosedLegend,
               hasReducedLegend,
@@ -2015,7 +2228,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         'closed-road-fill',
         'reduced-road-fill',
         'pedestrian-road-fill',
-        'detour-road-layer'
+        'detour-road-layer',
+        'manual-line-fill'
       ];
       const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
       if (eksisterendeLag.length === 0) return;
@@ -2035,6 +2249,19 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             }
             closedSignsRef.current = closedSignsRef.current.filter((sign) => sign.id !== targetId);
             syncClosedSources();
+          }
+        } else if (layerId === 'manual-line-fill') {
+          const manualLineId = typeof properties.id === 'string' ? properties.id : null;
+          if (manualLineId) {
+            const deletedManualLine = removeManualLineById(manualLineId);
+            if (deletedManualLine) {
+              actionHistoryRef.current.push({
+                type: 'delete',
+                category: 'manual-line',
+                data: deletedManualLine
+              });
+              syncManualLinesSource();
+            }
           }
         } else {
           const targetUuid = typeof properties.uuid === 'string' ? properties.uuid : null;
@@ -2113,6 +2340,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           : [];
       if (
         nvdbFeatures.length > 0 &&
+        !isManualModeRef.current &&
         (activeToolRef.current === 'closed' ||
           activeToolRef.current === 'reduced' ||
           activeToolRef.current === 'pedestrian' ||
@@ -2226,31 +2454,22 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         return;
       }
 
-      if (activeToolRef.current === 'detour') {
-        detourPointsRef.current = [...detourPointsRef.current, clickedPosition];
-        actionHistoryRef.current.push({ type: 'add', category: 'detour-point' });
-        syncDetourSource();
-        return;
-      }
+      if (isManualModeRef.current) {
+        const selectedColor = getManualColorForTool(activeToolRef.current);
+        if (!selectedColor) return;
 
-      if (activeToolRef.current === 'closed') {
-        closedPointsRef.current = [...closedPointsRef.current, clickedPosition];
-        actionHistoryRef.current.push({ type: 'add', category: 'closed-point' });
-        syncClosedSources();
-        return;
-      }
+        const snappedPosition = getSnappedPoint(clickedPosition);
+        const activeManualLine = activeManualLineIdRef.current
+          ? manualLinesRef.current.find((line) => line.id === activeManualLineIdRef.current)
+          : null;
 
-      if (activeToolRef.current === 'reduced') {
-        reducedPointsRef.current = [...reducedPointsRef.current, clickedPosition];
-        actionHistoryRef.current.push({ type: 'add', category: 'reduced-point' });
-        syncReducedSource();
-        return;
-      }
+        if (!activeManualLine || activeManualLine.color !== selectedColor) {
+          finishActiveManualLine();
+        }
 
-      if (activeToolRef.current === 'pedestrian') {
-        pedestrianPointsRef.current = [...pedestrianPointsRef.current, clickedPosition];
-        actionHistoryRef.current.push({ type: 'add', category: 'pedestrian-point' });
-        syncPedestrianSource();
+        const lineId = appendPointToActiveManualLine(snappedPosition, selectedColor);
+        actionHistoryRef.current.push({ type: 'add', category: 'manual-line', id: lineId });
+        syncManualLinesSource();
       }
     });
 
@@ -2262,7 +2481,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         'closed-road-fill',
         'reduced-road-fill',
         'pedestrian-road-fill',
-        'detour-road-layer'
+        'detour-road-layer',
+        'manual-line-fill'
       ];
       const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
       const features =
@@ -2298,8 +2518,15 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       }, 500);
     });
 
+    const handleEscapeResetManualSegments = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      finishActiveManualLine();
+    };
+    window.addEventListener('keydown', handleEscapeResetManualSegments);
+
     return () => {
       if (moveDebounceRef.current) window.clearTimeout(moveDebounceRef.current);
+      window.removeEventListener('keydown', handleEscapeResetManualSegments);
       closeAnnotationPopup();
       removeAllAnnotationMarkers();
       map.current?.removeControl(geocodingControl);
@@ -2655,10 +2882,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   }, [annotations]);
 
   const activeLegendRows = useMemo(() => {
-    const hasClosed = closedRoadFeaturesRef.current.length > 0;
-    const hasReduced = reducedRoadFeaturesRef.current.length > 0;
-    const hasPedestrian = pedestrianFeaturesRef.current.length > 0;
-    const hasDetour = detourFeaturesRef.current.length > 0;
+    const hasClosed =
+      closedRoadFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.closedRoad && line.points.length >= 2);
+    const hasReduced =
+      reducedRoadFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.reducedRoad && line.points.length >= 2);
+    const hasPedestrian =
+      pedestrianFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.pedestrian && line.points.length >= 2);
+    const hasDetour =
+      detourFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.detour && line.points.length >= 2);
     return getActiveLegendRows(hasClosed, hasReduced, hasPedestrian, hasDetour);
   }, [legendRenderVersion]);
 
