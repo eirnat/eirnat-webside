@@ -1894,13 +1894,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
         await fetchNvdbRoadNetwork();
 
-        const exportHideLayerIds = [
-          ...NVDB_EXPORT_HIDE_LAYER_IDS,
-          'closed-sign-layer',
-          'annotations-layer',
-          'annotations-bg-white',
-          'annotations-bg-green'
-        ];
+        // Skjul kun NVDB-hjelpelag. Stengtskilt beholdes på MapLibre-canvasen
+        // så PNG matcher det som vises på skjermen (ingen manuell omtegning).
+        const exportHideLayerIds = [...NVDB_EXPORT_HIDE_LAYER_IDS];
         const previousLayerVisibility: Record<string, 'visible' | 'none'> = {};
         for (const layerId of exportHideLayerIds) {
           if (!mapInstance.getLayer(layerId)) continue;
@@ -1936,49 +1932,20 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           try {
             if (!ctx) return;
 
-            // 1. Bruk kartets faktiske canvas-størrelse for å unngå skaleringsfeil
-            const dpr = window.devicePixelRatio || 1;
             const mapCanvas = mapInstance.getCanvas();
             exportCanvas.width = mapCanvas.width;
             exportCanvas.height = mapCanvas.height;
 
-            // Legg hvit bakgrunn bak kartet for mer lesbart PNG-resultat.
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
             ctx.drawImage(mapCanvas, 0, 0);
 
-            // MapLibre project() gir CSS-piksler, mens exportCanvas er i canvas-piksler.
+            // MapLibre project() og DOM-markører er i CSS-piksler;
+            // exportCanvas er i device-piksler (canvas buffer).
             const canvasBounds = mapCanvas.getBoundingClientRect();
             const scaleX = exportCanvas.width / canvasBounds.width;
             const scaleY = exportCanvas.height / canvasBounds.height;
-            const scaleAvg = (scaleX + scaleY) / 2;
 
-            const currentZoom = mapInstance.getZoom();
-            for (const sign of closedSignsRef.current) {
-              const image = signImageCacheRef.current[sign.kind];
-              if (!image) continue;
-
-              const projected = mapInstance.project(sign.coordinates);
-
-              const baseHeight = CLOSED_SIGN_PNG_BASE_SIZE;
-              let targetScale = 0.25;
-              if (currentZoom <= 13) targetScale = 0.20;
-              else if (currentZoom >= 19) targetScale = 0.55;
-              else {
-                targetScale = 0.20 + (0.35 * (currentZoom - 13) / 6);
-              }
-              const nw = image.naturalWidth || 1;
-              const nh = image.naturalHeight || 1;
-              const aspectRatio = nw / nh;
-
-              const h = (baseHeight * targetScale) * scaleAvg;
-              const w = h * aspectRatio;
-
-              const x = projected.x * scaleX - w / 2;
-              const y = projected.y * scaleY - h / 2;
-
-              ctx.drawImage(image, x, y, w, h);
-            }
             const annotations = annotationsRef.current;
             const wrapTextLines = (text: string, maxChars = 30): string[] => {
               const paragraphs = text.split('\n');
@@ -2007,30 +1974,38 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             if (annotations.length > 0 && 'fonts' in document) {
               await document.fonts.ready;
             }
+
+            // Annotasjoner er HTML-markører utenfor MapLibre-canvasen — tegn dem
+            // med samme CSS-skala og stil som på skjermen.
             for (const annotation of annotations) {
               const point = mapInstance.project(annotation.coordinates);
               const posX = point.x * scaleX;
               const posY = point.y * scaleY;
-              const fontSize = Math.max(10, annotation.size) * dpr;
-              const padding = 6 * dpr;
-              const lineHeight = fontSize * 1.1;
+              // Match DOM: fontSize = size px, padding 5px 10px, lineHeight 1
+              const fontSize = Math.max(10, annotation.size) * scaleY;
+              const padY = 5 * scaleY;
+              const padX = 10 * scaleX;
+              const lineHeight = fontSize;
               const lines = wrapTextLines(annotation.text || '', 30);
+              const maxWidthCss = Math.max(250, annotation.size * 15) * scaleX;
 
               ctx.save();
               ctx.font = `${annotation.backgroundStyle === 'white' ? 'normal' : 'bold'} ${fontSize}px Arial, sans-serif`;
-              const maxLineWidth = Math.max(...lines.map((line) => ctx.measureText(line).width));
+              const measured = Math.max(...lines.map((line) => ctx.measureText(line).width), 0);
+              const maxLineWidth = Math.min(measured, maxWidthCss);
               const totalTextHeight = lines.length * lineHeight;
-              const boxWidth = maxLineWidth + padding * 2;
-              const boxHeight = totalTextHeight + padding * 2;
+              const hasBox = annotation.backgroundStyle !== 'none';
+              const boxWidth = hasBox ? maxLineWidth + padX * 2 : maxLineWidth;
+              const boxHeight = hasBox ? totalTextHeight + padY * 2 : totalTextHeight;
 
               ctx.translate(posX, posY);
               ctx.rotate(((annotation.rotation || 0) * Math.PI) / 180);
 
-              if (annotation.backgroundStyle !== 'none') {
+              if (hasBox) {
                 const rectX = -boxWidth / 2;
                 const rectY = -boxHeight / 2;
                 const radius =
-                  annotation.backgroundStyle === 'green' ? 2 * dpr : 6 * dpr;
+                  annotation.backgroundStyle === 'green' ? 2 * scaleY : 6 * scaleY;
 
                 ctx.beginPath();
                 ctx.roundRect(rectX, rectY, boxWidth, boxHeight, radius);
@@ -2038,12 +2013,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
                   ctx.fillStyle = ANNOTATION_EURO_GREEN;
                   ctx.fill();
                   ctx.strokeStyle = '#ffffff';
-                  ctx.lineWidth = 1 * dpr;
+                  ctx.lineWidth = 1 * scaleY;
                 } else {
                   ctx.fillStyle = '#ffffff';
                   ctx.fill();
                   ctx.strokeStyle = '#000000';
-                  ctx.lineWidth = 2 * dpr;
+                  ctx.lineWidth = 2 * scaleY;
                 }
                 ctx.stroke();
               }
@@ -2079,22 +2054,23 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             );
 
             if (showLegend && activeLegendRows.length > 0) {
-              const boxX = 16 * dpr;
-              const boxW = 380 * dpr;
-              const legendTopInset = 20 * dpr;
-              const legendBottomInset = 20 * dpr;
-              const legendRowSpacing = 36 * dpr;
+              // Match on-screen: left-4 (16px), bottom-10 (40px), w-[380px], p-2, mt-2 rows
+              const boxX = 16 * scaleX;
+              const boxW = 380 * scaleX;
+              const boxPadding = 8 * scaleY;
+              const rowGap = 8 * scaleY;
+              const rowHeight = 18 * scaleY;
               const boxH =
-                legendTopInset +
-                legendBottomInset +
-                Math.max(0, activeLegendRows.length - 1) * legendRowSpacing;
-              const boxY = exportCanvas.height - 20 * dpr - boxH;
+                boxPadding * 2 +
+                activeLegendRows.length * rowHeight +
+                Math.max(0, activeLegendRows.length - 1) * rowGap;
+              const boxY = exportCanvas.height - 40 * scaleY - boxH;
 
               ctx.save();
               ctx.fillStyle = '#ffffff';
               ctx.strokeStyle = '#000000';
-              ctx.lineWidth = 2 * dpr;
-              const legendRadius = 6 * dpr;
+              ctx.lineWidth = 2 * scaleY;
+              const legendRadius = 6 * scaleY;
               ctx.beginPath();
               ctx.roundRect(boxX, boxY, boxW, boxH, legendRadius);
               ctx.fill();
@@ -2105,18 +2081,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
                 casingColor: string,
                 mainColor: string
               ) => {
-                const startX = boxX + 16 * dpr;
-                const endX = boxX + 86 * dpr;
+                const startX = boxX + boxPadding;
+                const endX = boxX + boxPadding + 64 * scaleX;
                 ctx.lineCap = 'round';
                 ctx.strokeStyle = casingColor;
-                ctx.lineWidth = 9 * dpr;
+                ctx.lineWidth = 10 * scaleY;
                 ctx.beginPath();
                 ctx.moveTo(startX, y);
                 ctx.lineTo(endX, y);
                 ctx.stroke();
 
                 ctx.strokeStyle = mainColor;
-                ctx.lineWidth = 6 * dpr;
+                ctx.lineWidth = 6 * scaleY;
                 ctx.beginPath();
                 ctx.moveTo(startX, y);
                 ctx.lineTo(endX, y);
@@ -2124,14 +2100,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               };
 
               ctx.fillStyle = '#111827';
-              // Større, fet legend-tekst for bedre lesbarhet i nedskalerte bilder.
-              ctx.font = `bold ${18 * dpr}px Arial, sans-serif`;
+              ctx.font = `bold ${18 * scaleY}px Arial, sans-serif`;
               ctx.textAlign = 'left';
               ctx.textBaseline = 'middle';
               activeLegendRows.forEach((row, index) => {
-                const rowY = boxY + legendTopInset + index * legendRowSpacing;
+                const rowY =
+                  boxY + boxPadding + rowHeight / 2 + index * (rowHeight + rowGap);
                 drawLegendLine(rowY, row.casingColor, row.mainColor);
-                ctx.fillText(row.label, boxX + 106 * dpr, rowY);
+                ctx.fillText(row.label, boxX + boxPadding + 64 * scaleX + 8 * scaleX, rowY);
               });
               ctx.restore();
             }
