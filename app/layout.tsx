@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="no" className={`${lexend.variable} font-sans`}>
       <body className="bg-background text-foreground antialiased min-h-screen flex flex-col">
-        <div className="flex-grow">{children}</div>
+        <div className="relative z-0 flex-grow">{children}</div>
         <ConditionalFooter />
       </body>
     </html>
