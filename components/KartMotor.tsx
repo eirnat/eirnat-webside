@@ -3,18 +3,28 @@ import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from
 import maplibregl from 'maplibre-gl';
 import { GeocodingControl } from '@maptiler/geocoding-control/maplibregl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { buildKartStyle, PLACE_LABEL_LAYER_IDS, ROAD_LABEL_LAYER_IDS } from '@/lib/mapStyle';
 
 const SVV_COLORS = {
-  closedRoad: "#E60000", // SVV Rød
-  closedRoadOutline: "#990000", // Mork rod casing
-  reducedRoad: "#FF9900", // SVV Oransje
-  reducedRoadOutline: "#B36B00", // Mork oransje casing
+  closedRoad: "#C33425", // SVV Rød
+  closedRoadOutline: "#7F1F14", // Mork rod casing
+  reducedRoad: "#EAB436", // SVV Oransje
+  reducedRoadOutline: "#9C7411", // Mork oransje casing
   pedestrian: "#0099FF", // Lys bla
   pedestrianOutline: "#005999", // Morkere bla casing
   detour: "#00B359",     // SVV Grønn
   detourOutline: "#005c31", // Mork gronn casing
   background: "#F5F5F5"
 };
+
+/** Farger fra tidligere paletter, slik at eldre prosjektfiler tegnes med dagens farger. */
+const LEGACY_COLOR_ALIASES: Record<string, string> = {
+  '#e60000': SVV_COLORS.closedRoad,
+  '#ff9900': SVV_COLORS.reducedRoad
+};
+
+const toCurrentPaletteColor = (color: string): string =>
+  LEGACY_COLOR_ALIASES[color.toLowerCase()] ?? color;
 
 export type ActiveTool =
   | 'none'
@@ -29,7 +39,8 @@ export type ActiveTool =
   | 'text';
 
 type KartMotorProps = {
-  mapStyle: 'dataviz' | 'streets';
+  showPlaceLabels: boolean;
+  showRoadLabels: boolean;
   activeTool: ActiveTool;
   manualModeEnabled: boolean;
   onClear: number;
@@ -117,12 +128,6 @@ const NVDB_BASE_URL = 'https://nvdbapiles.atlas.vegvesen.no';
 
 /** Skjules midlertidig under PNG-eksport (grå referansevegnett). */
 const NVDB_EXPORT_HIDE_LAYER_IDS = ['nvdb-layer', 'nvdb-hitbox', 'nvdb-hover-layer'] as const;
-
-const buildMapTilerStyleUrl = (mapStyle: 'dataviz' | 'streets'): string => {
-  const slug = mapStyle + (mapStyle === 'streets' ? '-v2' : '');
-  const mapTilerKey = (process.env.NEXT_PUBLIC_MAPTILER_KEY ?? '').trim();
-  return `https://api.maptiler.com/maps/${slug}/style.json?key=${encodeURIComponent(mapTilerKey)}`;
-};
 
 const SIGN_ASSET_PATHS: Record<SignKind, string> = {
   'stengt-skilt': '/icons/stengtvei.svg',
@@ -312,7 +317,8 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
 
 const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function KartMotor(
   {
-    mapStyle,
+    showPlaceLabels,
+    showRoadLabels,
     activeTool,
     manualModeEnabled,
     onClear,
@@ -366,10 +372,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     () => annotations.map((annotation) => annotation.id).sort().join('|'),
     [annotations]
   );
-  const mapStyleRef = useRef(mapStyle);
-
-  const lastAppliedMapStyleRef = useRef<'dataviz' | 'streets' | null>(null);
-  const styleLoadGenerationRef = useRef(0);
+  const showPlaceLabelsRef = useRef(showPlaceLabels);
+  showPlaceLabelsRef.current = showPlaceLabels;
+  const showRoadLabelsRef = useRef(showRoadLabels);
+  showRoadLabelsRef.current = showRoadLabels;
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -399,10 +405,6 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       styleEl.remove();
     };
   }, []);
-
-  useEffect(() => {
-    mapStyleRef.current = mapStyle;
-  }, [mapStyle]);
 
   useEffect(() => {
     editingAnnotationIdRef.current = editingAnnotationId;
@@ -952,117 +954,22 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
   };
 
-  const applyCustomStyle = (mapInstance: maplibregl.Map) => {
-    const ownLayerIds = new Set([
-      'annotations-layer',
-      'annotations-bg-white',
-      'annotations-bg-green',
-      'closed-sign-layer',
-      'manual-line-fill',
-      'manual-line-outline',
-      'detour-road-layer',
-      'detour-road-casing-layer',
-      'pedestrian-road-fill',
-      'pedestrian-road-outline',
-      'reduced-road-fill',
-      'reduced-road-outline',
-      'closed-road-fill',
-      'closed-road-outline',
-      'nvdb-hover-layer',
-      'nvdb-hitbox',
-      'nvdb-layer'
-    ]);
-    const layers = mapInstance.getStyle().layers ?? [];
-    const activeStyle = mapStyleRef.current;
+  /**
+   * Slår tekst og symboler i bakgrunnskartet av og på. Endrer bare synligheten
+   * på eksisterende lag, slik at tegninger og NVDB-data blir stående urørt.
+   */
+  const applyLabelVisibility = (mapInstance: maplibregl.Map) => {
+    const groups: Array<[string[], boolean]> = [
+      [PLACE_LABEL_LAYER_IDS, showPlaceLabelsRef.current],
+      [ROAD_LABEL_LAYER_IDS, showRoadLabelsRef.current]
+    ];
 
-    layers.forEach((layer) => {
-      if (ownLayerIds.has(layer.id)) return;
-      const id = layer.id.toLowerCase();
-
-      if (activeStyle === 'dataviz') {
-        const keepRoadInfo =
-          id.includes('road_label') ||
-          id.includes('highway_label') ||
-          id.includes('shield');
-        const shouldHide =
-          id.includes('label') ||
-          id.includes('place') ||
-          id.includes('poi') ||
-          id.includes('transit');
-
-        if (shouldHide && !keepRoadInfo) {
-          try {
-            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
-          } catch {
-            // ignorer lag uten visibility-layout
-          }
-        } else if (keepRoadInfo) {
-          try {
-            mapInstance.setLayoutProperty(layer.id, 'visibility', 'visible');
-          } catch {
-            // ignorer lag uten visibility-layout
-          }
-        }
-
-        const isRoadGeometry =
-          layer.type === 'line' &&
-          'source-layer' in layer &&
-          layer['source-layer'] === 'transportation';
-        if (!isRoadGeometry) return;
-
-        if (id.includes('casing')) {
-          try {
-            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
-          } catch {
-            // ignorer lag uten visibility-layout
-          }
-          return;
-        }
-
-        try {
-          mapInstance.setPaintProperty(layer.id, 'line-color', [
-            'match',
-            ['get', 'class'],
-            'motorway',
-            '#faec93',
-            'trunk',
-            '#faec93',
-            'primary',
-            '#faec93',
-            '#d1d1d1'
-          ]);
-        } catch {
-          // ignorer lag uten kompatibel line-color
-        }
-      } else {
-        const isRoadOrPlaceLabel =
-          id.includes('road_label') || id.includes('place_label');
-        if (isRoadOrPlaceLabel) {
-          try {
-            mapInstance.setLayoutProperty(layer.id, 'visibility', 'visible');
-          } catch {
-            // ignorer lag uten visibility-layout
-          }
-          return;
-        }
-
-        const hasNoiseKeyword =
-          id.includes('poi') ||
-          id.includes('shop') ||
-          id.includes('food') ||
-          id.includes('restaurant') ||
-          id.includes('amenity') ||
-          id.includes('transit');
-        const isRailLayer = id.includes('rail');
-        if (hasNoiseKeyword && !isRailLayer) {
-          try {
-            mapInstance.setLayoutProperty(layer.id, 'visibility', 'none');
-          } catch {
-            // ignorer lag uten visibility-layout
-          }
-        }
+    for (const [layerIds, visible] of groups) {
+      for (const layerId of layerIds) {
+        if (!mapInstance.getLayer(layerId)) continue;
+        mapInstance.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
       }
-    });
+    }
   };
 
   const initializeMapLayers = async (mapInstance: maplibregl.Map) => {
@@ -1755,7 +1662,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (points.length === 0) return;
       normalized.push({
         id: typeof line.id === 'string' && line.id.length > 0 ? line.id : crypto.randomUUID(),
-        color: line.color,
+        color: toCurrentPaletteColor(line.color),
         points
       });
     });
@@ -2151,10 +2058,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
-    const initialStyleUrl = buildMapTilerStyleUrl(mapStyle);
     const mapOptions = {
       container: mapContainer.current,
-      style: initialStyleUrl,
+      style: buildKartStyle(process.env.NEXT_PUBLIC_MAPTILER_KEY ?? ''),
       center: [5.32, 60.39], // Bergen
       zoom: 9.5,
       preserveDrawingBuffer: true,
@@ -2170,7 +2076,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     map.current = new maplibregl.Map(mapOptions);
     map.current.on('style.load', () => {
       if (!map.current) return;
-      applyCustomStyle(map.current);
+      applyLabelVisibility(map.current);
     });
 
     const geocodingControl = new GeocodingControl({
@@ -2502,34 +2408,16 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       map.current?.remove();
       map.current = null;
     };
-    // Kart instansieres én gang; mapStyle byttes via egen effekt nedenfor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialStyleUrl fanger første mapStyle
+    // Kart instansieres én gang.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stilen bygges lokalt og endres ikke
   }, []);
 
   useEffect(() => {
-    if (!map.current) return;
-
-    if (lastAppliedMapStyleRef.current === null) {
-      lastAppliedMapStyleRef.current = mapStyle;
-      return;
-    }
-    if (lastAppliedMapStyleRef.current === mapStyle) return;
-
     const instance = map.current;
-    const url = buildMapTilerStyleUrl(mapStyle);
-
-    styleLoadGenerationRef.current += 1;
-    const generation = styleLoadGenerationRef.current;
-
-    instance.once('style.load', async () => {
-      if (generation !== styleLoadGenerationRef.current || !map.current) return;
-      lastAppliedMapStyleRef.current = mapStyle;
-      await initializeMapLayers(map.current);
-      syncAllData();
-      void fetchNvdbRoadNetwork();
-    });
-    instance.setStyle(url);
-  }, [mapStyle]);
+    if (!instance || !instance.isStyleLoaded()) return;
+    applyLabelVisibility(instance);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- leser gjeldende verdier via refs
+  }, [showPlaceLabels, showRoadLabels]);
 
   useEffect(() => {
     if (!map.current) return;
