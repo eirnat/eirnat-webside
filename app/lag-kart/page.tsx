@@ -13,14 +13,50 @@ const KartMotor = dynamic(() => import("@/components/KartMotor"), {
 const toolButtonBase =
   "w-full rounded-xl px-4 py-3 text-sm font-semibold border shadow-sm transition-all hover:-translate-y-0.5 active:scale-95";
 
-const toolButtonGrid =
-  `${toolButtonBase} flex min-h-[5.25rem] flex-col items-center justify-center gap-1.5 text-center`;
-
 const toolButtonFull =
   `${toolButtonBase} flex items-center justify-center gap-2`;
 
 const quickActionBtn =
   "flex flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-2 text-center text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95";
+
+function VisningsBryter({
+  id,
+  label,
+  checked,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700"
+    >
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="peer sr-only"
+      />
+      <span
+        className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+          checked ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"
+        }`}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full transition-colors ${
+            checked ? "bg-white" : "bg-transparent"
+          }`}
+        />
+      </span>
+      <span>{label}</span>
+    </label>
+  );
+}
 
 export default function LagKartPage() {
   const mapRef = useRef<KartMotorHandle | null>(null);
@@ -38,7 +74,8 @@ export default function LagKartPage() {
     coordinates: [number, number];
     backgroundStyle: AnnotationBackgroundStyle;
   } | null>(null);
-  const [mapStyle, setMapStyle] = useState<"dataviz" | "streets">("streets");
+  const [showPlaceLabels, setShowPlaceLabels] = useState(true);
+  const [showRoadLabels, setShowRoadLabels] = useState(true);
 
   useEffect(() => {
     setIsMounted(true);
@@ -327,31 +364,21 @@ export default function LagKartPage() {
 
             <div>
               <div className="mb-2 text-xs font-bold tracking-wide text-slate-500">
-                KARTTYPE
+                KARTVISNING
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMapStyle("streets")}
-                  className={`${toolButtonGrid} ${
-                    mapStyle === "streets"
-                      ? "border-2 border-slate-700 bg-slate-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span>Detaljert</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMapStyle("dataviz")}
-                  className={`${toolButtonGrid} ${
-                    mapStyle === "dataviz"
-                      ? "border-2 border-slate-700 bg-slate-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span>Enkelt</span>
-                </button>
+              <div className="flex flex-col gap-2">
+                <VisningsBryter
+                  id="place-labels-desktop"
+                  label="Stedsnavn og symboler"
+                  checked={showPlaceLabels}
+                  onChange={setShowPlaceLabels}
+                />
+                <VisningsBryter
+                  id="road-labels-desktop"
+                  label="Veinummer og veinavn"
+                  checked={showRoadLabels}
+                  onChange={setShowRoadLabels}
+                />
               </div>
             </div>
 
@@ -624,31 +651,21 @@ export default function LagKartPage() {
 
             <div>
               <div className="mb-2 text-xs font-bold tracking-wide text-slate-500">
-                KARTTYPE
+                KARTVISNING
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMapStyle("streets")}
-                  className={`${toolButtonGrid} ${
-                    mapStyle === "streets"
-                      ? "border-2 border-slate-700 bg-slate-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span>Detaljert</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMapStyle("dataviz")}
-                  className={`${toolButtonGrid} ${
-                    mapStyle === "dataviz"
-                      ? "border-2 border-slate-700 bg-slate-700 text-white"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span>Enkelt</span>
-                </button>
+              <div className="flex flex-col gap-2">
+                <VisningsBryter
+                  id="place-labels-mobile"
+                  label="Stedsnavn og symboler"
+                  checked={showPlaceLabels}
+                  onChange={setShowPlaceLabels}
+                />
+                <VisningsBryter
+                  id="road-labels-mobile"
+                  label="Veinummer og veinavn"
+                  checked={showRoadLabels}
+                  onChange={setShowRoadLabels}
+                />
               </div>
             </div>
 
@@ -703,7 +720,8 @@ export default function LagKartPage() {
         <section className="order-1 min-h-0 min-w-0 flex-1 lg:order-2">
           <KartMotor
             ref={mapRef as never}
-            mapStyle={mapStyle}
+            showPlaceLabels={showPlaceLabels}
+            showRoadLabels={showRoadLabels}
             activeTool={activeTool}
             manualModeEnabled={isManualMode}
             onClear={onClear}
