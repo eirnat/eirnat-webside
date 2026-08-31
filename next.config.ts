@@ -10,8 +10,6 @@ const nextConfig: NextConfig = {
         destination: "/helge",
         permanent: true,
       },
-      { source: "/QR", destination: "/qr", permanent: true },
-      { source: "/QR/:path*", destination: "/qr/:path*", permanent: true },
     ];
   },
 };
