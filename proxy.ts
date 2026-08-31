@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_QR_PATHS = ["/qr/login", "/qr/ikke-funnet"];
+const PUBLIC_QR_PATHS = ["/qr/login", "/qr/ikke-funnet", "/qr/personvern"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -24,5 +24,4 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: ["/qr/:path*"],
-  runtime: "nodejs",
 };

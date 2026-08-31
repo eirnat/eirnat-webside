@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { auth } from "@/auth";
 import { generateSlug } from "@/lib/qr/slug";
 import { validateTargetUrl } from "@/lib/qr/validate-url";
 import { createLink, updateLink, getLinkById } from "@/lib/db/links";
@@ -10,7 +11,17 @@ export type ActionResult = {
   error?: string;
 };
 
+async function requireAuth(): Promise<ActionResult | null> {
+  const session = await auth();
+  if (!session) {
+    return { ok: false, error: "Ikke innlogget." };
+  }
+  return null;
+}
+
 export async function createLinkAction(formData: FormData): Promise<ActionResult> {
+  const authError = await requireAuth();
+  if (authError) return authError;
   const label = String(formData.get("label") ?? "").trim();
   const placeName = String(formData.get("place_name") ?? "").trim();
   const targetUrlRaw = String(formData.get("target_url") ?? "").trim();
@@ -45,6 +56,9 @@ export async function createLinkAction(formData: FormData): Promise<ActionResult
 }
 
 export async function updateLinkAction(formData: FormData): Promise<ActionResult> {
+  const authError = await requireAuth();
+  if (authError) return authError;
+
   const id = String(formData.get("id") ?? "");
   const label = String(formData.get("label") ?? "").trim();
   const placeName = String(formData.get("place_name") ?? "").trim();
@@ -87,6 +101,9 @@ export async function updateLinkAction(formData: FormData): Promise<ActionResult
 }
 
 export async function deactivateLinkAction(id: string): Promise<ActionResult> {
+  const authError = await requireAuth();
+  if (authError) return authError;
+
   try {
     const link = await getLinkById(id);
     if (!link) {
@@ -110,6 +127,11 @@ export async function deactivateLinkAction(id: string): Promise<ActionResult> {
 }
 
 export async function exportScansCsv(linkId: string): Promise<string> {
+  const authError = await requireAuth();
+  if (authError) {
+    throw new Error(authError.error);
+  }
+
   const { getAllScansForExport } = await import("@/lib/db/scans");
   const scans = await getAllScansForExport(linkId);
 
