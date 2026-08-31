@@ -18,13 +18,7 @@ export async function GET(
     return new NextResponse("For mange forespørsler", { status: 429 });
   }
 
-  let link;
-  try {
-    link = await getLinkBySlug(slug);
-  } catch (error) {
-    console.error("Kunne ikke slå opp lenke", error);
-    return NextResponse.redirect(new URL("/qr/ikke-funnet", req.url), 302);
-  }
+  const link = await getLinkBySlug(slug);
 
   if (!link || !link.active) {
     return NextResponse.redirect(new URL("/qr/ikke-funnet", req.url), 302);

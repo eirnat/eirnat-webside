@@ -18,7 +18,7 @@ export async function GET(
     return new Response("Ikke funnet", { status: 404 });
   }
 
-  if (!link) {
+  if (!link || !link.active) {
     return new Response("Ikke funnet", { status: 404 });
   }
 

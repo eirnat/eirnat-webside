@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useEffect } from "react";
 import { updateLinkAction, type ActionResult } from "./actions";
 import type { Link } from "@/lib/db/types";
 
@@ -15,6 +15,11 @@ export function EditLinkForm({ link }: EditLinkFormProps) {
     async (_prev: ActionResult, formData: FormData) => updateLinkAction(formData),
     initialState,
   );
+  const prevPending = useRef(false);
+
+  useEffect(() => {
+    prevPending.current = pending;
+  }, [pending]);
 
   return (
     <form action={formAction} className="space-y-4 bg-white border border-slate-200 rounded-2xl p-6">
@@ -25,7 +30,11 @@ export function EditLinkForm({ link }: EditLinkFormProps) {
           {state.error}
         </p>
       ) : null}
-      {state.ok && !pending && state !== initialState ? null : null}
+      {!pending && state.ok && prevPending.current ? (
+        <p className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">
+          Endringer lagret!
+        </p>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
