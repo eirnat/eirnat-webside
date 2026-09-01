@@ -4,6 +4,34 @@ import maplibregl from 'maplibre-gl';
 import { GeocodingControl } from '@maptiler/geocoding-control/maplibregl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { buildKartStyle, PLACE_LABEL_LAYER_IDS, ROAD_LABEL_LAYER_IDS } from '@/lib/mapStyle';
+import { type LineDirection } from '@/lib/lineDirection';
+import {
+  ARROW_ICON_PATHS,
+  getArrowIconKind,
+  normalizeLineArrows,
+  snapClickToMarkedLine,
+  snapPositionToMarkedLine,
+  type ArrowPlacementDirection,
+  type LineArrowMarker,
+  type MarkedLine
+} from '@/lib/lineArrowPlacement';
+import {
+  getPositionOnSegment,
+  getSegmentRoadId,
+  getVeglenkesekvensId,
+  isAlreadyMarked,
+  selectSegmentsInRange
+} from '@/lib/roadStretchSelection';
+import {
+  getArrowIconScale,
+  getSignIconScale,
+  SIGN_BASE_HEIGHT
+} from '@/lib/mapExport/constants';
+import { runMapExport } from '@/lib/mapExport/runMapExport';
+import type { ExportOptions, ExportVectorData } from '@/lib/mapExport/types';
+
+export type { LineDirection };
+export type { ExportFormat, ExportOptions, ExportResolution } from '@/lib/mapExport/types';
 
 const SVV_COLORS = {
   closedRoad: "#C33425", // SVV Rød
@@ -43,16 +71,19 @@ type KartMotorProps = {
   showRoadLabels: boolean;
   activeTool: ActiveTool;
   manualModeEnabled: boolean;
+  stretchSelectEnabled: boolean;
   onClear: number;
   onUndo: number;
   editingAnnotation: { id: string; text: string; size: number; rotation: number; coordinates: Position; backgroundStyle: AnnotationBackgroundStyle } | null;
   onEditingAnnotationChange: (annotation: { id: string; text: string; size: number; rotation: number; coordinates: Position; backgroundStyle: AnnotationBackgroundStyle } | null) => void;
   showLegend: boolean;
+  lineDirection: LineDirection;
   onTextAnnotationCreated: () => void;
+  exportPreviewMode: boolean;
 };
 
-  export type KartMotorHandle = {
-  downloadAsPng: () => void;
+export type KartMotorHandle = {
+  exportMap: (options: ExportOptions) => Promise<void>;
   exportMapData: () => void;
   openProject: () => void;
 };
@@ -69,13 +100,24 @@ type Annotation = {
 };
 type SignKind = 'stengt-skilt' | 'lyskryss-skilt' | 'veiarbeid-skilt' | 'ko-skilt';
 type SignPlacement = { id: string; coordinates: Position; kind: SignKind };
+type LegendId = 'closed' | 'reduced' | 'pedestrian' | 'detour';
 type LegendRow = {
-  id: 'closed' | 'reduced' | 'pedestrian' | 'detour';
+  id: LegendId;
   label: string;
   casingColor: string;
   mainColor: string;
 };
 type ManualLine = { id: string; color: string; points: Position[] };
+type SegmentToolCategory =
+  | 'closed-segment'
+  | 'reduced-segment'
+  | 'pedestrian-segment'
+  | 'detour-segment';
+type StretchAnchor = {
+  veglenkesekvensId: string;
+  position: number;
+  coordinates: Position;
+};
 type ActionCategory =
   | 'closed-segment'
   | 'reduced-segment'
@@ -83,11 +125,14 @@ type ActionCategory =
   | 'closed-sign'
   | 'detour-segment'
   | 'manual-line'
+  | 'line-arrow'
   | 'annotation';
 type ActionHistoryItem =
   | { type: 'add'; category: Exclude<ActionCategory, 'manual-line'> }
   | { type: 'add'; category: 'manual-line'; id: string }
+  | { type: 'add-batch'; category: SegmentToolCategory; uuids: string[] }
   | { type: 'delete'; category: 'closed-sign'; data: SignPlacement }
+  | { type: 'delete'; category: 'line-arrow'; data: LineArrowMarker }
   | { type: 'delete'; category: 'closed-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
   | { type: 'delete'; category: 'reduced-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
   | { type: 'delete'; category: 'pedestrian-segment'; data: GeoJSON.Feature<GeoJSON.LineString> }
@@ -115,6 +160,15 @@ type MapProjectData = {
   detourManualSegments?: Position[][];
   detourPoints?: Position[];
   annotations: Annotation[];
+  legendLabels?: Partial<Record<LegendId, string>>;
+  lineArrows?: LineArrowMarker[];
+};
+
+const DEFAULT_LEGEND_LABELS: Record<LegendId, string> = {
+  closed: 'Stengt veg',
+  reduced: 'Redusert fremkommelighet',
+  pedestrian: 'Fotgjengere/syklister',
+  detour: 'Alternativ rute'
 };
 
 const emptyFeatureCollection = (): FeatureCollection => ({
@@ -126,9 +180,6 @@ const emptyFeatureCollection = (): FeatureCollection => ({
 const NVDB_MIN_ZOOM = 14;
 const NVDB_BASE_URL = 'https://nvdbapiles.atlas.vegvesen.no';
 
-/** Skjules midlertidig under PNG-eksport (grå referansevegnett). */
-const NVDB_EXPORT_HIDE_LAYER_IDS = ['nvdb-layer', 'nvdb-hitbox', 'nvdb-hover-layer'] as const;
-
 const SIGN_ASSET_PATHS: Record<SignKind, string> = {
   'stengt-skilt': '/icons/stengtvei.svg',
   'lyskryss-skilt': '/icons/lyskryss.svg',
@@ -136,35 +187,31 @@ const SIGN_ASSET_PATHS: Record<SignKind, string> = {
   'ko-skilt': '/icons/trafikkork.svg'
 };
 
-const LEGEND_ROWS: LegendRow[] = [
-  { id: 'closed', label: 'Stengt veg', casingColor: SVV_COLORS.closedRoadOutline, mainColor: SVV_COLORS.closedRoad },
-  {
-    id: 'reduced',
-    label: 'Redusert fremkommelighet',
-    casingColor: SVV_COLORS.reducedRoadOutline,
-    mainColor: SVV_COLORS.reducedRoad
-  },
-  {
-    id: 'pedestrian',
-    label: 'Fotgjengere/syklister',
-    casingColor: SVV_COLORS.pedestrianOutline,
-    mainColor: SVV_COLORS.pedestrian
-  },
-  { id: 'detour', label: 'Alternativ rute', casingColor: SVV_COLORS.detourOutline, mainColor: SVV_COLORS.detour }
+const LEGEND_ROW_META: Array<Omit<LegendRow, 'label'>> = [
+  { id: 'closed', casingColor: SVV_COLORS.closedRoadOutline, mainColor: SVV_COLORS.closedRoad },
+  { id: 'reduced', casingColor: SVV_COLORS.reducedRoadOutline, mainColor: SVV_COLORS.reducedRoad },
+  { id: 'pedestrian', casingColor: SVV_COLORS.pedestrianOutline, mainColor: SVV_COLORS.pedestrian },
+  { id: 'detour', casingColor: SVV_COLORS.detourOutline, mainColor: SVV_COLORS.detour }
 ];
 
 const getActiveLegendRows = (
   hasClosed: boolean,
   hasReduced: boolean,
   hasPedestrian: boolean,
-  hasDetour: boolean
+  hasDetour: boolean,
+  legendLabels: Record<LegendId, string>
 ): LegendRow[] => {
-  return LEGEND_ROWS.filter((row) => {
-    if (row.id === 'closed') return hasClosed;
-    if (row.id === 'reduced') return hasReduced;
-    if (row.id === 'pedestrian') return hasPedestrian;
-    return hasDetour;
-  });
+  const visibility: Record<LegendId, boolean> = {
+    closed: hasClosed,
+    reduced: hasReduced,
+    pedestrian: hasPedestrian,
+    detour: hasDetour
+  };
+
+  return LEGEND_ROW_META.filter((row) => visibility[row.id]).map((row) => ({
+    ...row,
+    label: legendLabels[row.id]
+  }));
 };
 
 /** Samme som normalisert bredde/høyde i loadSignAssets (px). */
@@ -237,6 +284,14 @@ function drawGreenBox() {
   }
   return ctx?.getImageData(0, 0, size, size) ?? null;
 }
+
+const getOutlineColorForLineColor = (color: string): string => {
+  if (color === SVV_COLORS.closedRoad) return SVV_COLORS.closedRoadOutline;
+  if (color === SVV_COLORS.reducedRoad) return SVV_COLORS.reducedRoadOutline;
+  if (color === SVV_COLORS.pedestrian) return SVV_COLORS.pedestrianOutline;
+  if (color === SVV_COLORS.detour) return SVV_COLORS.detourOutline;
+  return '#374151';
+};
 
 const parseWktLineString = (wkt: string): Position[] => {
   const normalized = wkt.trim();
@@ -315,18 +370,46 @@ const toGeoJsonFeatureCollection = (payload: unknown): FeatureCollection => {
   };
 };
 
+const isRoadSegmentTool = (
+  tool: ActiveTool
+): tool is 'closed' | 'reduced' | 'pedestrian' | 'detour' =>
+  tool === 'closed' || tool === 'reduced' || tool === 'pedestrian' || tool === 'detour';
+
+type SignTool = 'sign' | 'traffic-light' | 'road-work' | 'queue';
+
+const SIGN_TOOL_ICON: Record<SignTool, SignKind> = {
+  sign: 'stengt-skilt',
+  'traffic-light': 'lyskryss-skilt',
+  'road-work': 'veiarbeid-skilt',
+  queue: 'ko-skilt'
+};
+
+const isSignTool = (tool: ActiveTool): tool is SignTool =>
+  tool === 'sign' || tool === 'traffic-light' || tool === 'road-work' || tool === 'queue';
+
+const MARKED_LINE_LAYERS = new Set([
+  'manual-line-fill',
+  'closed-road-fill',
+  'reduced-road-fill',
+  'pedestrian-road-fill',
+  'detour-road-layer'
+]);
+
 const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function KartMotor(
   {
     showPlaceLabels,
     showRoadLabels,
     activeTool,
     manualModeEnabled,
+    stretchSelectEnabled,
     onClear,
     onUndo,
     editingAnnotation,
     onEditingAnnotationChange,
     showLegend,
-    onTextAnnotationCreated
+    lineDirection,
+    onTextAnnotationCreated,
+    exportPreviewMode
   },
   ref
 ) {
@@ -337,6 +420,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const manualLinesRef = useRef<ManualLine[]>([]);
   const activeManualLineIdRef = useRef<string | null>(null);
   const isManualModeRef = useRef(false);
+  const stretchSelectEnabledRef = useRef(false);
+  const stretchAnchorRef = useRef<StretchAnchor | null>(null);
+  const stretchErrorTimeoutRef = useRef<number | null>(null);
   const detourFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const closedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
   const reducedRoadFeaturesRef = useRef<GeoJSON.Feature<GeoJSON.LineString>[]>([]);
@@ -345,6 +431,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const isFetchingRef = useRef(false);
   /** Manuelt plasserte skilt (no-entry), i kartets lng/lat */
   const closedSignsRef = useRef<SignPlacement[]>([]);
+  const lineArrowsRef = useRef<LineArrowMarker[]>([]);
   const lastFetchedBboxRef = useRef<string | null>(null);
   const moveDebounceRef = useRef<number | null>(null);
   const skipNextMapClickRef = useRef(false);
@@ -364,7 +451,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [showZoomHint, setShowZoomHint] = useState(true);
+  const [stretchError, setStretchError] = useState<string | null>(null);
   const [legendRenderVersion, setLegendRenderVersion] = useState(0);
+  const [legendLabels, setLegendLabels] = useState<Record<LegendId, string>>(DEFAULT_LEGEND_LABELS);
+  const lineDirectionRef = useRef<LineDirection>('none');
+  const legendLabelsRef = useRef(legendLabels);
+  legendLabelsRef.current = legendLabels;
   const editingAnnotationIdRef = useRef<string | null>(null);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
@@ -380,6 +472,18 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   useEffect(() => {
     activeToolRef.current = activeTool;
   }, [activeTool]);
+
+  useEffect(() => {
+    lineDirectionRef.current = lineDirection;
+  }, [lineDirection]);
+
+  useEffect(() => {
+    if (!map.current) return;
+    const frame = requestAnimationFrame(() => {
+      map.current?.resize();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [exportPreviewMode]);
 
   useEffect(() => {
     isManualModeRef.current = manualModeEnabled;
@@ -440,6 +544,120 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     if (tool === 'pedestrian') return SVV_COLORS.pedestrian;
     if (tool === 'detour') return SVV_COLORS.detour;
     return null;
+  };
+
+  const getMarkedLines = (): MarkedLine[] => {
+    const lines: MarkedLine[] = [];
+
+    const addFeatures = (
+      features: GeoJSON.Feature<GeoJSON.LineString>[],
+      lineColor: string
+    ) => {
+      for (const feature of features) {
+        const coordinates = feature.geometry.coordinates as Position[];
+        if (coordinates.length >= 2) {
+          lines.push({ coordinates, lineColor });
+        }
+      }
+    };
+
+    addFeatures(closedRoadFeaturesRef.current, SVV_COLORS.closedRoad);
+    addFeatures(reducedRoadFeaturesRef.current, SVV_COLORS.reducedRoad);
+    addFeatures(pedestrianFeaturesRef.current, SVV_COLORS.pedestrian);
+    addFeatures(detourFeaturesRef.current, SVV_COLORS.detour);
+
+    for (const line of manualLinesRef.current) {
+      if (line.points.length >= 2) {
+        lines.push({ coordinates: line.points, lineColor: line.color });
+      }
+    }
+
+    return lines;
+  };
+
+  const syncLineArrowsSource = () => {
+    const features: GeoJSON.Feature<GeoJSON.Point>[] = lineArrowsRef.current.flatMap((arrow) => {
+      const iconKind = getArrowIconKind(arrow.lineColor, arrow.direction);
+      if (!iconKind) return [];
+      return [{
+        type: 'Feature',
+        properties: {
+          id: arrow.id,
+          iconKind,
+          bearing: arrow.bearing,
+          direction: arrow.direction,
+          lineColor: arrow.lineColor
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: arrow.coordinates
+        }
+      }];
+    });
+
+    updateSourceData('line-arrows-source', {
+      type: 'FeatureCollection',
+      features
+    });
+    setLegendRenderVersion((prev) => prev + 1);
+  };
+
+  const addLineArrowAtClick = (clickLngLat: Position): boolean => {
+    const mapInstance = map.current;
+    const direction = lineDirectionRef.current;
+    if (!mapInstance || direction === 'none' || !isRoadSegmentTool(activeToolRef.current)) {
+      return false;
+    }
+
+    const activeColor = getManualColorForTool(activeToolRef.current);
+    if (!activeColor) return false;
+
+    const snap = snapClickToMarkedLine(
+      clickLngLat,
+      getMarkedLines(),
+      (position) => mapInstance.project(position)
+    );
+    if (!snap || snap.lineColor !== activeColor) return false;
+
+    const marker: LineArrowMarker = {
+      id: crypto.randomUUID(),
+      coordinates: snap.coordinates,
+      bearing: snap.bearing,
+      direction,
+      lineColor: snap.lineColor
+    };
+    lineArrowsRef.current = [...lineArrowsRef.current, marker];
+    actionHistoryRef.current.push({ type: 'add', category: 'line-arrow' });
+    syncLineArrowsSource();
+    return true;
+  };
+
+  const getSnappedSignPosition = (clickLngLat: Position): Position => {
+    const mapInstance = map.current;
+    if (!mapInstance) return clickLngLat;
+
+    const snapped = snapPositionToMarkedLine(
+      clickLngLat,
+      getMarkedLines(),
+      (position) => mapInstance.project(position)
+    );
+    return snapped ?? clickLngLat;
+  };
+
+  const placeSignFromClick = (clickLngLat: Position) => {
+    const tool = activeToolRef.current;
+    if (!isSignTool(tool)) return;
+
+    closedSignsRef.current = [
+      ...closedSignsRef.current,
+      {
+        id: crypto.randomUUID(),
+        coordinates: getSnappedSignPosition(clickLngLat),
+        kind: SIGN_TOOL_ICON[tool]
+      }
+    ];
+    actionHistoryRef.current.push({ type: 'add', category: 'closed-sign' });
+    syncClosedSources();
   };
 
   const finishActiveManualLine = () => {
@@ -530,7 +748,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       .filter((line) => line.points.length >= 2)
       .map((line) => ({
         type: 'Feature',
-        properties: { id: line.id, color: line.color, kind: 'manual-line' },
+        properties: {
+          id: line.id,
+          color: line.color,
+          kind: 'manual-line'
+        },
         geometry: {
           type: 'LineString',
           coordinates: line.points
@@ -578,6 +800,35 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
   const updateSourceData = (sourceId: string, data: FeatureCollection) => {
     const source = map.current?.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
     source?.setData(data);
+  };
+
+  const loadArrowAssets = async (mapInstance: maplibregl.Map) => {
+    await Promise.all(
+      Object.entries(ARROW_ICON_PATHS).map(([iconId, assetPath]) => {
+        return new Promise<void>((resolve) => {
+          if (mapInstance.hasImage(iconId)) {
+            resolve();
+            return;
+          }
+
+          const img = new Image();
+          img.src = assetPath;
+          img.crossOrigin = 'anonymous';
+
+          img.onload = () => {
+            if (!mapInstance.hasImage(iconId)) {
+              mapInstance.addImage(iconId, img);
+            }
+            resolve();
+          };
+
+          img.onerror = () => {
+            console.error('Klarte ikke laste pil-ikon:', assetPath);
+            resolve();
+          };
+        });
+      })
+    );
   };
 
   const loadSignAssets = async (mapInstance: maplibregl.Map) => {
@@ -844,6 +1095,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     reducedRoadFeaturesRef.current = [];
     pedestrianFeaturesRef.current = [];
     closedSignsRef.current = [];
+    lineArrowsRef.current = [];
     actionHistoryRef.current = [];
     lastEditingAnnotationSentRef.current = null;
     setEditingAnnotationId(null);
@@ -854,10 +1106,75 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     updateSourceData('detour-road', emptyFeatureCollection());
     updateSourceData('manual-lines-source', emptyFeatureCollection());
     updateSourceData('closed-signs', emptyFeatureCollection());
+    updateSourceData('line-arrows-source', emptyFeatureCollection());
     updateSourceData('annotations-source', emptyFeatureCollection());
     removeAllAnnotationMarkers();
     closeAnnotationPopup();
+    clearStretchSelection();
+    setLegendLabels(DEFAULT_LEGEND_LABELS);
     setLegendRenderVersion((prev) => prev + 1);
+  };
+
+  const syncStretchPreview = (features: GeoJSON.Feature<GeoJSON.LineString>[]) => {
+    if (!map.current?.getSource('stretch-preview-source')) return;
+    updateSourceData('stretch-preview-source', {
+      type: 'FeatureCollection',
+      features
+    });
+  };
+
+  const syncStretchAnchorMarker = (anchor: StretchAnchor | null) => {
+    if (!map.current?.getSource('stretch-anchor-source')) return;
+    updateSourceData('stretch-anchor-source', {
+      type: 'FeatureCollection',
+      features: anchor
+        ? [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Point',
+                coordinates: anchor.coordinates
+              }
+            }
+          ]
+        : []
+    });
+  };
+
+  const showStretchError = (message: string) => {
+    setStretchError(message);
+    if (stretchErrorTimeoutRef.current) {
+      window.clearTimeout(stretchErrorTimeoutRef.current);
+    }
+    stretchErrorTimeoutRef.current = window.setTimeout(() => {
+      setStretchError(null);
+      stretchErrorTimeoutRef.current = null;
+    }, 4000);
+  };
+
+  const clearStretchSelection = () => {
+    stretchAnchorRef.current = null;
+    setStretchError(null);
+    if (stretchErrorTimeoutRef.current) {
+      window.clearTimeout(stretchErrorTimeoutRef.current);
+      stretchErrorTimeoutRef.current = null;
+    }
+    syncStretchPreview([]);
+    syncStretchAnchorMarker(null);
+    const mapInstance = map.current;
+    if (mapInstance?.getLayer('nvdb-hover-layer')) {
+      mapInstance.setPaintProperty('nvdb-hover-layer', 'line-opacity', 0);
+    }
+  };
+
+  const getMarkedFeaturesForTool = (
+    tool: 'closed' | 'reduced' | 'pedestrian' | 'detour'
+  ): GeoJSON.Feature<GeoJSON.LineString>[] => {
+    if (tool === 'closed') return closedRoadFeaturesRef.current;
+    if (tool === 'reduced') return reducedRoadFeaturesRef.current;
+    if (tool === 'pedestrian') return pedestrianFeaturesRef.current;
+    return detourFeaturesRef.current;
   };
 
   const getRoadLabel = (properties: GeoJSON.GeoJsonProperties | null | undefined) => {
@@ -878,6 +1195,129 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     if (typeof props.vegnummer === 'string') return props.vegnummer;
     return 'Ukjent veg';
   };
+
+  const addRoadSegmentsBatch = (
+    segments: GeoJSON.Feature<GeoJSON.LineString>[],
+    tool: 'closed' | 'reduced' | 'pedestrian' | 'detour'
+  ): number => {
+    const markedFeatures = getMarkedFeaturesForTool(tool);
+    const kind =
+      tool === 'closed'
+        ? 'closed-road'
+        : tool === 'reduced'
+          ? 'reduced-road'
+          : tool === 'pedestrian'
+            ? 'pedestrian-road'
+            : 'detour-road';
+    const category: SegmentToolCategory =
+      tool === 'closed'
+        ? 'closed-segment'
+        : tool === 'reduced'
+          ? 'reduced-segment'
+          : tool === 'pedestrian'
+            ? 'pedestrian-segment'
+            : 'detour-segment';
+
+    const newFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+    const uuids: string[] = [];
+
+    for (const segment of segments) {
+      if (isAlreadyMarked(segment, markedFeatures)) continue;
+      const coordinates = segment.geometry.coordinates as Position[];
+      if (coordinates.length < 2) continue;
+
+      const roadLabel = getRoadLabel(segment.properties);
+      const roadId = getSegmentRoadId(segment) ?? getFeatureRoadId(segment);
+      const uuid = crypto.randomUUID();
+      uuids.push(uuid);
+      newFeatures.push({
+        type: 'Feature',
+        properties: {
+          kind,
+          roadLabel,
+          roadId,
+          uuid
+        },
+        geometry: { type: 'LineString', coordinates }
+      });
+    }
+
+    if (newFeatures.length === 0) return 0;
+
+    if (tool === 'closed') {
+      closedRoadFeaturesRef.current = [...closedRoadFeaturesRef.current, ...newFeatures];
+      actionHistoryRef.current.push({ type: 'add-batch', category, uuids });
+      syncClosedSources();
+    } else if (tool === 'reduced') {
+      reducedRoadFeaturesRef.current = [...reducedRoadFeaturesRef.current, ...newFeatures];
+      actionHistoryRef.current.push({ type: 'add-batch', category, uuids });
+      syncReducedSource();
+    } else if (tool === 'pedestrian') {
+      pedestrianFeaturesRef.current = [...pedestrianFeaturesRef.current, ...newFeatures];
+      actionHistoryRef.current.push({ type: 'add-batch', category, uuids });
+      syncPedestrianSource();
+    } else {
+      detourFeaturesRef.current = [...detourFeaturesRef.current, ...newFeatures];
+      actionHistoryRef.current.push({ type: 'add-batch', category, uuids });
+      syncDetourSource();
+    }
+
+    return newFeatures.length;
+  };
+
+  const handleStretchSelectClick = (
+    clickedFeature: GeoJSON.Feature<GeoJSON.LineString>,
+    clickLngLat: Position
+  ): boolean => {
+    const tool = activeToolRef.current;
+    if (!isRoadSegmentTool(tool)) return false;
+
+    const veglenkesekvensId = getVeglenkesekvensId(clickedFeature);
+    const positionResult = getPositionOnSegment(clickLngLat, clickedFeature);
+    if (!veglenkesekvensId || !positionResult) return false;
+
+    const anchor: StretchAnchor = {
+      veglenkesekvensId,
+      position: positionResult.position,
+      coordinates: positionResult.coordinates
+    };
+
+    const existingAnchor = stretchAnchorRef.current;
+    if (!existingAnchor) {
+      stretchAnchorRef.current = anchor;
+      syncStretchAnchorMarker(anchor);
+      return true;
+    }
+
+    if (existingAnchor.veglenkesekvensId !== veglenkesekvensId) {
+      showStretchError('Velg et punkt på samme vei som startpunktet.');
+      clearStretchSelection();
+      return true;
+    }
+
+    const segments = selectSegmentsInRange(
+      roadCacheRef.current.values(),
+      veglenkesekvensId,
+      existingAnchor.position,
+      anchor.position
+    );
+    addRoadSegmentsBatch(segments, tool);
+    clearStretchSelection();
+    return true;
+  };
+
+  useEffect(() => {
+    stretchSelectEnabledRef.current = stretchSelectEnabled;
+    if (!stretchSelectEnabled) {
+      clearStretchSelection();
+    }
+  }, [stretchSelectEnabled]);
+
+  useEffect(() => {
+    if (!isRoadSegmentTool(activeTool)) {
+      clearStretchSelection();
+    }
+  }, [activeTool]);
 
   const syncDetourSource = () => {
     updateSourceData('detour-road', {
@@ -928,6 +1368,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     syncPedestrianSource();
     syncDetourSource();
     syncManualLinesSource();
+    syncLineArrowsSource();
     if (roadCacheRef.current.size > 0) {
       updateSourceData('nvdb-source', {
         type: 'FeatureCollection',
@@ -978,6 +1419,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'annotations-bg-green',
       'annotations-layer',
       'closed-sign-layer',
+      'line-arrows-layer',
       'manual-line-fill',
       'manual-line-outline',
       'detour-road-layer',
@@ -989,6 +1431,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'closed-road-fill',
       'closed-road-outline',
       'nvdb-hover-layer',
+      'stretch-preview-layer',
+      'stretch-anchor-layer',
       'nvdb-hitbox',
       'nvdb-layer'
     ];
@@ -1000,6 +1444,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       'reduced-road',
       'closed-road',
       'manual-lines-source',
+      'line-arrows-source',
+      'stretch-preview-source',
+      'stretch-anchor-source',
       'nvdb-source'
     ];
 
@@ -1016,8 +1463,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     if (mapInstance.hasImage('annotation-bg-box')) mapInstance.removeImage('annotation-bg-box');
     if (mapInstance.hasImage('annotation-green-box')) mapInstance.removeImage('annotation-green-box');
     if (mapInstance.hasImage('annotation-bg-green')) mapInstance.removeImage('annotation-bg-green');
+    for (const iconId of Object.keys(ARROW_ICON_PATHS)) {
+      if (mapInstance.hasImage(iconId)) mapInstance.removeImage(iconId);
+    }
 
     await loadSignAssets(mapInstance);
+    await loadArrowAssets(mapInstance);
     const annotationBgImage = drawAnnotationBackgroundBox();
     if (annotationBgImage) mapInstance.addImage('annotation-bg-box', annotationBgImage);
     const annotationGreenBoxImage = drawGreenBox();
@@ -1059,6 +1510,21 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addSource('manual-lines-source', {
+      type: 'geojson',
+      data: emptyFeatureCollection()
+    });
+
+    mapInstance.addSource('line-arrows-source', {
+      type: 'geojson',
+      data: emptyFeatureCollection()
+    });
+
+    mapInstance.addSource('stretch-preview-source', {
+      type: 'geojson',
+      data: emptyFeatureCollection()
+    });
+
+    mapInstance.addSource('stretch-anchor-source', {
       type: 'geojson',
       data: emptyFeatureCollection()
     });
@@ -1107,6 +1573,32 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       const feature = event.features?.[0] as GeoJSON.Feature<GeoJSON.LineString> | undefined;
       if (!feature || feature.geometry.type !== 'LineString') return;
 
+      const anchor = stretchAnchorRef.current;
+      if (anchor && stretchSelectEnabledRef.current && isRoadSegmentTool(activeToolRef.current)) {
+        const hoverLngLat: Position = [event.lngLat.lng, event.lngLat.lat];
+        const veglenkesekvensId = getVeglenkesekvensId(feature);
+        const positionResult = getPositionOnSegment(hoverLngLat, feature);
+
+        if (
+          veglenkesekvensId &&
+          positionResult &&
+          veglenkesekvensId === anchor.veglenkesekvensId
+        ) {
+          const previewSegments = selectSegmentsInRange(
+            roadCacheRef.current.values(),
+            veglenkesekvensId,
+            anchor.position,
+            positionResult.position
+          );
+          syncStretchPreview(previewSegments);
+        } else {
+          syncStretchPreview([]);
+        }
+
+        mapInstance.setPaintProperty('nvdb-hover-layer', 'line-opacity', 0);
+        return;
+      }
+
       const props = (feature.properties ?? {}) as Record<string, unknown>;
       const hoverId =
         props.roadId ??
@@ -1120,6 +1612,31 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       } else {
         mapInstance.setFilter('nvdb-hover-layer', ['==', ['to-string', ['get', 'veglenkesekvensid']], String(hoverId)]);
         mapInstance.setPaintProperty('nvdb-hover-layer', 'line-opacity', 0.95);
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'stretch-preview-layer',
+      type: 'line',
+      source: 'stretch-preview-source',
+      minzoom: NVDB_MIN_ZOOM,
+      paint: {
+        'line-color': '#2563eb',
+        'line-width': 8,
+        'line-opacity': 0.55
+      }
+    });
+
+    mapInstance.addLayer({
+      id: 'stretch-anchor-layer',
+      type: 'circle',
+      source: 'stretch-anchor-source',
+      minzoom: NVDB_MIN_ZOOM,
+      paint: {
+        'circle-radius': 7,
+        'circle-color': '#2563eb',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2
       }
     });
 
@@ -1277,6 +1794,25 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     });
 
     mapInstance.addLayer({
+      id: 'line-arrows-layer',
+      type: 'symbol',
+      source: 'line-arrows-source',
+      layout: {
+        'icon-image': ['get', 'iconKind'],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.1, 16, 0.16, 19, 0.22],
+        'icon-rotate': [
+          'case',
+          ['==', ['get', 'direction'], 'reverse'],
+          ['+', ['coalesce', ['get', 'bearing'], 0], 180],
+          ['coalesce', ['get', 'bearing'], 0]
+        ],
+        'icon-rotation-alignment': 'map',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true
+      }
+    });
+
+    mapInstance.addLayer({
       id: 'annotations-layer',
       type: 'symbol',
       source: 'annotations-source',
@@ -1385,6 +1921,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
 
     mapInstance.on('mouseleave', 'nvdb-hitbox', () => {
       mapInstance.setPaintProperty('nvdb-hover-layer', 'line-opacity', 0);
+      if (stretchAnchorRef.current) {
+        syncStretchPreview([]);
+      }
     });
   };
 
@@ -1439,6 +1978,45 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         });
         return;
       }
+
+      if (lastAction.category === 'line-arrow') {
+        lineArrowsRef.current = lineArrowsRef.current.slice(0, -1);
+        syncLineArrowsSource();
+        return;
+      }
+    }
+
+    if (lastAction.type === 'add-batch') {
+      const removeByUuids = (features: GeoJSON.Feature<GeoJSON.LineString>[]) =>
+        features.filter(
+          (feature) =>
+            !lastAction.uuids.includes(
+              String((feature.properties as Record<string, unknown> | null | undefined)?.uuid ?? '')
+            )
+        );
+
+      if (lastAction.category === 'closed-segment') {
+        closedRoadFeaturesRef.current = removeByUuids(closedRoadFeaturesRef.current);
+        syncClosedSources();
+        return;
+      }
+
+      if (lastAction.category === 'reduced-segment') {
+        reducedRoadFeaturesRef.current = removeByUuids(reducedRoadFeaturesRef.current);
+        syncReducedSource();
+        return;
+      }
+
+      if (lastAction.category === 'pedestrian-segment') {
+        pedestrianFeaturesRef.current = removeByUuids(pedestrianFeaturesRef.current);
+        syncPedestrianSource();
+        return;
+      }
+
+      if (lastAction.category === 'detour-segment') {
+        detourFeaturesRef.current = removeByUuids(detourFeaturesRef.current);
+        syncDetourSource();
+      }
     }
 
     if (lastAction.type === 'delete') {
@@ -1475,6 +2053,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (lastAction.category === 'manual-line') {
         manualLinesRef.current = [...manualLinesRef.current, lastAction.data];
         syncManualLinesSource();
+        return;
+      }
+
+      if (lastAction.category === 'line-arrow') {
+        lineArrowsRef.current = [...lineArrowsRef.current, lastAction.data];
+        syncLineArrowsSource();
       }
     }
   };
@@ -1704,7 +2288,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       pedestrianFeatures: pedestrianFeaturesRef.current,
       detourFeatures: detourFeaturesRef.current,
       manualLines: manualLinesRef.current,
-      annotations: annotationsRef.current
+      annotations: annotationsRef.current,
+      legendLabels: legendLabelsRef.current,
+      lineArrows: lineArrowsRef.current
     };
 
     const fileDate = new Date().toISOString().slice(0, 10);
@@ -1742,12 +2328,28 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         : [];
       const detourLegacyPoints = normalizeLegacyPointsAsSingleSegment(parsed.detourPoints);
       const nextAnnotations = normalizeAnnotations(parsed.annotations);
+      const parsedLegendLabels = parsed.legendLabels;
+      const nextLegendLabels: Record<LegendId, string> = {
+        ...DEFAULT_LEGEND_LABELS,
+        ...(parsedLegendLabels && typeof parsedLegendLabels === 'object'
+          ? Object.fromEntries(
+              (Object.keys(DEFAULT_LEGEND_LABELS) as LegendId[])
+                .filter(
+                  (id) =>
+                    typeof parsedLegendLabels[id] === 'string' &&
+                    parsedLegendLabels[id]!.trim().length > 0
+                )
+                .map((id) => [id, parsedLegendLabels[id]!.trim()])
+            )
+          : {})
+      };
 
       closedSignsRef.current = nextClosedSigns;
       closedRoadFeaturesRef.current = nextClosedRoadFeatures;
       reducedRoadFeaturesRef.current = nextReducedRoadFeatures;
       pedestrianFeaturesRef.current = nextPedestrianFeatures;
       detourFeaturesRef.current = nextDetourFeatures;
+      lineArrowsRef.current = normalizeLineArrows(parsed.lineArrows);
       manualLinesRef.current =
         nextManualLines.length > 0
           ? nextManualLines
@@ -1766,12 +2368,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       setEditingAnnotationId(null);
       onEditingAnnotationChange(null);
       setAnnotations(nextAnnotations);
+      setLegendLabels(nextLegendLabels);
 
       syncClosedSources();
       syncReducedSource();
       syncPedestrianSource();
       syncDetourSource();
       syncManualLinesSource();
+      syncLineArrowsSource();
 
       const view = parsed.view as { center?: unknown; zoom?: unknown } | undefined;
       if (view && isPosition(view.center) && Number.isFinite(Number(view.zoom)) && map.current) {
@@ -1793,261 +2397,127 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     event.target.value = '';
   };
 
+  const hideAnnotationMarkers = () => {
+    for (const marker of Object.values(markersRef.current)) {
+      marker.getElement().style.visibility = 'hidden';
+    }
+  };
+
+  const showAnnotationMarkers = () => {
+    for (const marker of Object.values(markersRef.current)) {
+      marker.getElement().style.visibility = '';
+    }
+  };
+
+  const buildExportVectorData = (): ExportVectorData => {
+    const mapInstance = map.current;
+    const zoom = mapInstance?.getZoom() ?? 16;
+    const signScale = getSignIconScale(zoom);
+    const arrowScale = getArrowIconScale(zoom);
+
+    const addFeatureLines = (
+      features: GeoJSON.Feature<GeoJSON.LineString>[],
+      color: string
+    ) =>
+      features.map((feature) => ({
+        coordinates: feature.geometry.coordinates as [number, number][],
+        color,
+        outlineColor: getOutlineColorForLineColor(color)
+      }));
+
+    const lines = [
+      ...addFeatureLines(closedRoadFeaturesRef.current, SVV_COLORS.closedRoad),
+      ...addFeatureLines(reducedRoadFeaturesRef.current, SVV_COLORS.reducedRoad),
+      ...addFeatureLines(pedestrianFeaturesRef.current, SVV_COLORS.pedestrian),
+      ...addFeatureLines(detourFeaturesRef.current, SVV_COLORS.detour),
+      ...manualLinesRef.current
+        .filter((line) => line.points.length >= 2)
+        .map((line) => ({
+          coordinates: line.points,
+          color: line.color,
+          outlineColor: getOutlineColorForLineColor(line.color)
+        }))
+    ];
+
+    const signs = closedSignsRef.current.map((sign) => {
+      const cached = signImageCacheRef.current[sign.kind];
+      const naturalWidth = cached?.naturalWidth || SIGN_BASE_HEIGHT;
+      const naturalHeight = cached?.naturalHeight || SIGN_BASE_HEIGHT;
+      const aspectRatio = naturalWidth / naturalHeight;
+      const height = SIGN_BASE_HEIGHT * signScale;
+      return {
+        coordinates: sign.coordinates,
+        assetPath: SIGN_ASSET_PATHS[sign.kind],
+        width: height * aspectRatio,
+        height
+      };
+    });
+
+    const arrows = lineArrowsRef.current.map((arrow) => {
+      const iconKind = getArrowIconKind(arrow.lineColor, arrow.direction);
+      const assetPath = iconKind ? ARROW_ICON_PATHS[iconKind] : ARROW_ICON_PATHS['pil-en-roed'];
+      const size = SIGN_BASE_HEIGHT * arrowScale;
+      return {
+        coordinates: arrow.coordinates,
+        bearing: arrow.direction === 'reverse' ? arrow.bearing + 180 : arrow.bearing,
+        assetPath,
+        width: size,
+        height: size
+      };
+    });
+
+    const hasClosed =
+      closedRoadFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.closedRoad && line.points.length >= 2);
+    const hasReduced =
+      reducedRoadFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.reducedRoad && line.points.length >= 2);
+    const hasPedestrian =
+      pedestrianFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.pedestrian && line.points.length >= 2);
+    const hasDetour =
+      detourFeaturesRef.current.length > 0 ||
+      manualLinesRef.current.some((line) => line.color === SVV_COLORS.detour && line.points.length >= 2);
+
+    const legendRows = getActiveLegendRows(
+      hasClosed,
+      hasReduced,
+      hasPedestrian,
+      hasDetour,
+      legendLabelsRef.current
+    );
+
+    return {
+      lines,
+      signs,
+      arrows,
+      annotations: annotationsRef.current.map((annotation) => ({
+        text: annotation.text,
+        size: annotation.size,
+        rotation: annotation.rotation,
+        coordinates: annotation.coordinates,
+        backgroundStyle: annotation.backgroundStyle
+      })),
+      legendRows,
+      showLegend
+    };
+  };
+
   useImperativeHandle(ref, () => ({
-    downloadAsPng: () => {
-      void (async () => {
-        const mapInstance = map.current;
-        if (!mapInstance) return;
+    exportMap: async (options: ExportOptions) => {
+      const mapInstance = map.current;
+      const container = mapContainer.current;
+      if (!mapInstance || !container) return;
 
-        await fetchNvdbRoadNetwork();
-
-        // Skjul kun NVDB-hjelpelag. Stengtskilt beholdes på MapLibre-canvasen
-        // så PNG matcher det som vises på skjermen (ingen manuell omtegning).
-        const exportHideLayerIds = [...NVDB_EXPORT_HIDE_LAYER_IDS];
-        const previousLayerVisibility: Record<string, 'visible' | 'none'> = {};
-        for (const layerId of exportHideLayerIds) {
-          if (!mapInstance.getLayer(layerId)) continue;
-          try {
-            const v = mapInstance.getLayoutProperty(layerId, 'visibility');
-            previousLayerVisibility[layerId] =
-              typeof v === 'string' && (v === 'visible' || v === 'none') ? v : 'visible';
-            mapInstance.setLayoutProperty(layerId, 'visibility', 'none');
-          } catch {
-            // lag finnes ikke eller støtter ikke visibility
-          }
-        }
-
-        const restoreNvdbExportLayers = () => {
-          for (const layerId of exportHideLayerIds) {
-            if (!(layerId in previousLayerVisibility)) continue;
-            try {
-              mapInstance.setLayoutProperty(
-                layerId,
-                'visibility',
-                previousLayerVisibility[layerId]
-              );
-            } catch {
-              // ignorer
-            }
-          }
-          mapInstance.triggerRepaint();
-        };
-
-        const runCapture = async () => {
-          const exportCanvas = document.createElement('canvas');
-          const ctx = exportCanvas.getContext('2d');
-          try {
-            if (!ctx) return;
-
-            const mapCanvas = mapInstance.getCanvas();
-            exportCanvas.width = mapCanvas.width;
-            exportCanvas.height = mapCanvas.height;
-
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-            ctx.drawImage(mapCanvas, 0, 0);
-
-            // MapLibre project() og DOM-markører er i CSS-piksler;
-            // exportCanvas er i device-piksler (canvas buffer).
-            const canvasBounds = mapCanvas.getBoundingClientRect();
-            const scaleX = exportCanvas.width / canvasBounds.width;
-            const scaleY = exportCanvas.height / canvasBounds.height;
-
-            const annotations = annotationsRef.current;
-            const wrapTextLines = (text: string, maxChars = 30): string[] => {
-              const paragraphs = text.split('\n');
-              const wrapped: string[] = [];
-              for (const paragraph of paragraphs) {
-                const words = paragraph.trim().length > 0 ? paragraph.trim().split(/\s+/) : [''];
-                let currentLine = '';
-                for (const word of words) {
-                  if (!currentLine) {
-                    currentLine = word;
-                    continue;
-                  }
-                  const candidate = `${currentLine} ${word}`;
-                  if (candidate.length <= maxChars) {
-                    currentLine = candidate;
-                  } else {
-                    wrapped.push(currentLine);
-                    currentLine = word;
-                  }
-                }
-                wrapped.push(currentLine);
-              }
-              return wrapped;
-            };
-
-            if (annotations.length > 0 && 'fonts' in document) {
-              await document.fonts.ready;
-            }
-
-            // Annotasjoner er HTML-markører utenfor MapLibre-canvasen — tegn dem
-            // med samme CSS-skala og stil som på skjermen.
-            for (const annotation of annotations) {
-              const point = mapInstance.project(annotation.coordinates);
-              const posX = point.x * scaleX;
-              const posY = point.y * scaleY;
-              // Match DOM: fontSize = size px, padding 5px 10px, lineHeight 1
-              const fontSize = Math.max(10, annotation.size) * scaleY;
-              const padY = 5 * scaleY;
-              const padX = 10 * scaleX;
-              const lineHeight = fontSize;
-              const lines = wrapTextLines(annotation.text || '', 30);
-              const maxWidthCss = Math.max(250, annotation.size * 15) * scaleX;
-
-              ctx.save();
-              ctx.font = `${annotation.backgroundStyle === 'white' ? 'normal' : 'bold'} ${fontSize}px Arial, sans-serif`;
-              const measured = Math.max(...lines.map((line) => ctx.measureText(line).width), 0);
-              const maxLineWidth = Math.min(measured, maxWidthCss);
-              const totalTextHeight = lines.length * lineHeight;
-              const hasBox = annotation.backgroundStyle !== 'none';
-              const boxWidth = hasBox ? maxLineWidth + padX * 2 : maxLineWidth;
-              const boxHeight = hasBox ? totalTextHeight + padY * 2 : totalTextHeight;
-
-              ctx.translate(posX, posY);
-              ctx.rotate(((annotation.rotation || 0) * Math.PI) / 180);
-
-              if (hasBox) {
-                const rectX = -boxWidth / 2;
-                const rectY = -boxHeight / 2;
-                const radius =
-                  annotation.backgroundStyle === 'green' ? 2 * scaleY : 6 * scaleY;
-
-                ctx.beginPath();
-                ctx.roundRect(rectX, rectY, boxWidth, boxHeight, radius);
-                if (annotation.backgroundStyle === 'green') {
-                  ctx.fillStyle = ANNOTATION_EURO_GREEN;
-                  ctx.fill();
-                  ctx.strokeStyle = '#ffffff';
-                  ctx.lineWidth = 1 * scaleY;
-                } else {
-                  ctx.fillStyle = '#ffffff';
-                  ctx.fill();
-                  ctx.strokeStyle = '#000000';
-                  ctx.lineWidth = 2 * scaleY;
-                }
-                ctx.stroke();
-              }
-
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillStyle =
-                annotation.backgroundStyle === 'green' ? '#ffffff' : '#111827';
-              lines.forEach((line, index) => {
-                const lineY = -(totalTextHeight / 2) + index * lineHeight + lineHeight / 2;
-                ctx.fillText(line, 0, lineY);
-              });
-              ctx.restore();
-            }
-
-            const hasClosedLegend =
-              closedRoadFeaturesRef.current.length > 0 ||
-              manualLinesRef.current.some((line) => line.color === SVV_COLORS.closedRoad && line.points.length >= 2);
-            const hasReducedLegend =
-              reducedRoadFeaturesRef.current.length > 0 ||
-              manualLinesRef.current.some((line) => line.color === SVV_COLORS.reducedRoad && line.points.length >= 2);
-            const hasPedestrianLegend =
-              pedestrianFeaturesRef.current.length > 0 ||
-              manualLinesRef.current.some((line) => line.color === SVV_COLORS.pedestrian && line.points.length >= 2);
-            const hasDetourLegend =
-              detourFeaturesRef.current.length > 0 ||
-              manualLinesRef.current.some((line) => line.color === SVV_COLORS.detour && line.points.length >= 2);
-            const activeLegendRows = getActiveLegendRows(
-              hasClosedLegend,
-              hasReducedLegend,
-              hasPedestrianLegend,
-              hasDetourLegend
-            );
-
-            if (showLegend && activeLegendRows.length > 0) {
-              // Match on-screen: left-4 (16px), bottom-10 (40px), w-[380px], p-2, mt-2 rows
-              const boxX = 16 * scaleX;
-              const boxW = 380 * scaleX;
-              const boxPadding = 8 * scaleY;
-              const rowGap = 8 * scaleY;
-              const rowHeight = 18 * scaleY;
-              const boxH =
-                boxPadding * 2 +
-                activeLegendRows.length * rowHeight +
-                Math.max(0, activeLegendRows.length - 1) * rowGap;
-              const boxY = exportCanvas.height - 40 * scaleY - boxH;
-
-              ctx.save();
-              ctx.fillStyle = '#ffffff';
-              ctx.strokeStyle = '#000000';
-              ctx.lineWidth = 2 * scaleY;
-              const legendRadius = 6 * scaleY;
-              ctx.beginPath();
-              ctx.roundRect(boxX, boxY, boxW, boxH, legendRadius);
-              ctx.fill();
-              ctx.stroke();
-
-              const drawLegendLine = (
-                y: number,
-                casingColor: string,
-                mainColor: string
-              ) => {
-                const startX = boxX + boxPadding;
-                const endX = boxX + boxPadding + 64 * scaleX;
-                ctx.lineCap = 'round';
-                ctx.strokeStyle = casingColor;
-                ctx.lineWidth = 10 * scaleY;
-                ctx.beginPath();
-                ctx.moveTo(startX, y);
-                ctx.lineTo(endX, y);
-                ctx.stroke();
-
-                ctx.strokeStyle = mainColor;
-                ctx.lineWidth = 6 * scaleY;
-                ctx.beginPath();
-                ctx.moveTo(startX, y);
-                ctx.lineTo(endX, y);
-                ctx.stroke();
-              };
-
-              ctx.fillStyle = '#111827';
-              ctx.font = `bold ${18 * scaleY}px Arial, sans-serif`;
-              ctx.textAlign = 'left';
-              ctx.textBaseline = 'middle';
-              activeLegendRows.forEach((row, index) => {
-                const rowY =
-                  boxY + boxPadding + rowHeight / 2 + index * (rowHeight + rowGap);
-                drawLegendLine(rowY, row.casingColor, row.mainColor);
-                ctx.fillText(row.label, boxX + boxPadding + 64 * scaleX + 8 * scaleX, rowY);
-              });
-              ctx.restore();
-            }
-
-            const dataUrl = exportCanvas.toDataURL('image/png');
-            const link = document.createElement('a');
-            link.href = dataUrl;
-            link.download = `veiarbeidskart_${new Date().toISOString().slice(0, 10)}.png`;
-            link.click();
-          } finally {
-            restoreNvdbExportLayers();
-          }
-        };
-
-        let captured = false;
-        const scheduleCapture = () => {
-          if (captured) return;
-          captured = true;
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              void runCapture();
-            });
-          });
-        };
-
-        mapInstance.once('idle', scheduleCapture);
-        mapInstance.triggerRepaint();
-
-        window.setTimeout(() => {
-          if (captured) return;
-          scheduleCapture();
-        }, 500);
-      })();
+      await runMapExport({
+        mapInstance,
+        mapContainer: container,
+        vectorData: buildExportVectorData(),
+        options,
+        onPrepare: fetchNvdbRoadNetwork,
+        hideAnnotationMarkers,
+        showAnnotationMarkers
+      });
     },
     exportMapData,
     openProject: () => {
@@ -2098,7 +2568,10 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         setEditingAnnotationId(null);
       }
 
+      const clickLngLat: Position = [event.lngLat.lng, event.lngLat.lat];
+
       const slettbareLag = [
+        'line-arrows-layer',
         'closed-sign-layer',
         'closed-road-fill',
         'reduced-road-fill',
@@ -2107,13 +2580,32 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         'manual-line-fill'
       ];
       const eksisterendeLag = slettbareLag.filter((id) => mapInstance.getLayer(id));
-      if (eksisterendeLag.length === 0) return;
-      const features = mapInstance.queryRenderedFeatures(event.point, { layers: eksisterendeLag });
+      const features =
+        eksisterendeLag.length > 0
+          ? mapInstance.queryRenderedFeatures(event.point, { layers: eksisterendeLag })
+          : [];
 
       if (features.length > 0) {
         const feature = features[0];
         const layerId = feature.layer.id;
         const properties = (feature.properties ?? {}) as Record<string, unknown>;
+
+        if (layerId === 'line-arrows-layer') {
+          const targetId = typeof properties.id === 'string' ? properties.id : null;
+          if (targetId) {
+            const deletedArrow = lineArrowsRef.current.find((arrow) => arrow.id === targetId);
+            if (deletedArrow) {
+              actionHistoryRef.current.push({
+                type: 'delete',
+                category: 'line-arrow',
+                data: deletedArrow
+              });
+            }
+            lineArrowsRef.current = lineArrowsRef.current.filter((arrow) => arrow.id !== targetId);
+            syncLineArrowsSource();
+          }
+          return;
+        }
 
         if (layerId === 'closed-sign-layer') {
           const targetId = typeof properties.id === 'string' ? properties.id : null;
@@ -2125,6 +2617,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             closedSignsRef.current = closedSignsRef.current.filter((sign) => sign.id !== targetId);
             syncClosedSources();
           }
+          return;
+        }
+
+        if (isSignTool(activeToolRef.current) && MARKED_LINE_LAYERS.has(layerId)) {
+          placeSignFromClick(clickLngLat);
+          return;
+        } else if (lineDirectionRef.current !== 'none' && addLineArrowAtClick(clickLngLat)) {
+          return;
         } else if (layerId === 'manual-line-fill') {
           const manualLineId = typeof properties.id === 'string' ? properties.id : null;
           if (manualLineId) {
@@ -2208,18 +2708,35 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         return;
       }
 
+      if (addLineArrowAtClick(clickLngLat)) return;
+
       const nvdbLag = ['nvdb-hitbox'].filter((id) => mapInstance.getLayer(id));
       const nvdbFeatures =
         nvdbLag.length > 0
           ? mapInstance.queryRenderedFeatures(event.point, { layers: nvdbLag })
           : [];
+      const roadToolActive = isRoadSegmentTool(activeToolRef.current);
+
+      if (
+        stretchSelectEnabledRef.current &&
+        !isManualModeRef.current &&
+        roadToolActive
+      ) {
+        if (nvdbFeatures.length > 0) {
+          const clickedFeature = nvdbFeatures[0] as GeoJSON.Feature<GeoJSON.LineString>;
+          if (clickedFeature.geometry.type === 'LineString') {
+            handleStretchSelectClick(clickedFeature, clickLngLat);
+          }
+        } else if (stretchAnchorRef.current) {
+          clearStretchSelection();
+        }
+        return;
+      }
+
       if (
         nvdbFeatures.length > 0 &&
         !isManualModeRef.current &&
-        (activeToolRef.current === 'closed' ||
-          activeToolRef.current === 'reduced' ||
-          activeToolRef.current === 'pedestrian' ||
-          activeToolRef.current === 'detour')
+        roadToolActive
       ) {
         const clickedFeature = nvdbFeatures[0] as GeoJSON.Feature<GeoJSON.LineString>;
         if (clickedFeature.geometry.type !== 'LineString') return;
@@ -2236,7 +2753,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             ...closedRoadFeaturesRef.current,
             {
               type: 'Feature',
-              properties: { kind: 'closed-road', roadLabel, roadId, uuid },
+              properties: {
+                kind: 'closed-road',
+                roadLabel,
+                roadId,
+                uuid
+              },
               geometry: { type: 'LineString', coordinates }
             }
           ];
@@ -2250,7 +2772,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             ...reducedRoadFeaturesRef.current,
             {
               type: 'Feature',
-              properties: { kind: 'reduced-road', roadLabel, roadId, uuid },
+              properties: {
+                kind: 'reduced-road',
+                roadLabel,
+                roadId,
+                uuid
+              },
               geometry: { type: 'LineString', coordinates }
             }
           ];
@@ -2264,7 +2791,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
             ...pedestrianFeaturesRef.current,
             {
               type: 'Feature',
-              properties: { kind: 'pedestrian-road', roadLabel, roadId, uuid },
+              properties: {
+                kind: 'pedestrian-road',
+                roadLabel,
+                roadId,
+                uuid
+              },
               geometry: { type: 'LineString', coordinates }
             }
           ];
@@ -2277,7 +2809,12 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
           ...detourFeaturesRef.current,
           {
             type: 'Feature',
-            properties: { kind: 'detour-road', roadLabel, roadId, uuid },
+            properties: {
+              kind: 'detour-road',
+              roadLabel,
+              roadId,
+              uuid
+            },
             geometry: { type: 'LineString', coordinates }
           }
         ];
@@ -2309,23 +2846,8 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         return;
       }
 
-      const skiltVerktoy = ['sign', 'traffic-light', 'road-work', 'queue'] as const;
-      type SkiltVerktoy = (typeof skiltVerktoy)[number];
-      const tool = activeToolRef.current as SkiltVerktoy;
-      if (skiltVerktoy.includes(tool)) {
-        const iconMap: Record<SkiltVerktoy, SignKind> = {
-          'sign': 'stengt-skilt',
-          'traffic-light': 'lyskryss-skilt',
-          'road-work': 'veiarbeid-skilt',
-          'queue': 'ko-skilt'
-        };
-        const selectedIcon = iconMap[tool];
-        closedSignsRef.current = [
-          ...closedSignsRef.current,
-          { id: crypto.randomUUID(), coordinates: clickedPosition, kind: selectedIcon }
-        ];
-        actionHistoryRef.current.push({ type: 'add', category: 'closed-sign' });
-        syncClosedSources();
+      if (isSignTool(activeToolRef.current)) {
+        placeSignFromClick(clickedPosition);
         return;
       }
 
@@ -2352,6 +2874,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       const mapInstance = map.current;
       if (!mapInstance) return;
       const slettbareLag = [
+        'line-arrows-layer',
         'closed-sign-layer',
         'closed-road-fill',
         'reduced-road-fill',
@@ -2375,10 +2898,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       if (!map.current) return;
       map.current.on('styleimagemissing', async (e) => {
         const id = e.id;
-        if (!(id in SIGN_ASSET_PATHS)) return;
+        if (!(id in SIGN_ASSET_PATHS) && !(id in ARROW_ICON_PATHS)) return;
         const m = map.current;
         if (!m) return;
         await loadSignAssets(m);
+        await loadArrowAssets(m);
         m.triggerRepaint();
       });
       await initializeMapLayers(map.current);
@@ -2396,6 +2920,9 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     const handleEscapeResetManualSegments = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       finishActiveManualLine();
+      if (stretchAnchorRef.current) {
+        clearStretchSelection();
+      }
     };
     window.addEventListener('keydown', handleEscapeResetManualSegments);
 
@@ -2751,11 +3278,33 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
     const hasDetour =
       detourFeaturesRef.current.length > 0 ||
       manualLinesRef.current.some((line) => line.color === SVV_COLORS.detour && line.points.length >= 2);
-    return getActiveLegendRows(hasClosed, hasReduced, hasPedestrian, hasDetour);
-  }, [legendRenderVersion]);
+    return getActiveLegendRows(
+      hasClosed,
+      hasReduced,
+      hasPedestrian,
+      hasDetour,
+      legendLabels
+    );
+  }, [legendRenderVersion, legendLabels]);
+
+  const handleLegendLabelChange = (id: LegendId, value: string) => {
+    setLegendLabels((prev) => ({ ...prev, [id]: value }));
+  };
+
+  const handleLegendLabelBlur = (id: LegendId, value: string) => {
+    const trimmed = value.trim();
+    setLegendLabels((prev) => ({
+      ...prev,
+      [id]: trimmed.length > 0 ? trimmed : DEFAULT_LEGEND_LABELS[id]
+    }));
+  };
 
   return (
-    <div className="relative h-full w-full">
+    <div
+      className={`relative flex h-full w-full items-center justify-center ${
+        exportPreviewMode ? 'bg-slate-200' : ''
+      }`}
+    >
       <input
         ref={projectFileInputRef}
         type="file"
@@ -2763,10 +3312,20 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
         className="hidden"
         onChange={handleProjectFileSelected}
       />
-      <div ref={mapContainer} className="h-full w-full" />
+      <div
+        ref={mapContainer}
+        className={`w-full ${
+          exportPreviewMode ? 'aspect-[4/3] max-h-full shadow-lg ring-2 ring-blue-500/60' : 'h-full'
+        }`}
+      />
+      {exportPreviewMode && (
+        <div className="pointer-events-none absolute top-2 left-1/2 z-10 -translate-x-1/2 rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white shadow">
+          Eksportmodus 4:3 – juster utsnittet
+        </div>
+      )}
       {showLegend && activeLegendRows.length > 0 && (
         <div
-          className="absolute bottom-10 left-4 w-[380px] rounded-md border-2 border-black bg-white p-2 shadow-lg"
+          className="pointer-events-auto absolute bottom-10 left-4 w-[380px] rounded-md border-2 border-black bg-white p-2 shadow-lg"
           style={{ fontFamily: 'Arial, sans-serif' }}
         >
           {activeLegendRows.map((row, index) => (
@@ -2774,7 +3333,7 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
               key={row.id}
               className={`${index === 0 ? '' : 'mt-2 '}flex items-center gap-2 text-[18px] font-bold text-slate-800`}
             >
-              <div className="relative h-2.5 w-16">
+              <div className="relative h-2.5 w-16 shrink-0">
                 <span
                   className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full"
                   style={{ backgroundColor: row.casingColor }}
@@ -2784,7 +3343,14 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
                   style={{ backgroundColor: row.mainColor }}
                 />
               </div>
-              <span>{row.label}</span>
+              <input
+                type="text"
+                value={legendLabels[row.id]}
+                onChange={(event) => handleLegendLabelChange(row.id, event.target.value)}
+                onBlur={(event) => handleLegendLabelBlur(row.id, event.target.value)}
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-[18px] font-bold text-slate-800 outline-none focus:ring-0"
+                aria-label={`Tegnforklaring for ${DEFAULT_LEGEND_LABELS[row.id]}`}
+              />
             </div>
           ))}
         </div>
@@ -2792,6 +3358,11 @@ const KartMotor = React.forwardRef<KartMotorHandle, KartMotorProps>(function Kar
       {showZoomHint && (
         <div className="pointer-events-none absolute bottom-4 left-4 rounded-md bg-black/70 px-3 py-2 text-sm text-white">
           Zoom inn for å se vegnett
+        </div>
+      )}
+      {stretchError && (
+        <div className="pointer-events-none absolute bottom-4 right-4 max-w-xs rounded-md bg-red-600 px-3 py-2 text-sm text-white shadow-lg">
+          {stretchError}
         </div>
       )}
     </div>

@@ -16,6 +16,7 @@
     "@vercel/functions": "^3.9.5",
     "chart.js": "^4.5.1",
     "chess.js": "^1.4.0",
+    "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.7.0",
     "maplibre-gl": "^5.22.0",
