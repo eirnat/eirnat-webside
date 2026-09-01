@@ -3,7 +3,8 @@
 import dynamic from "next/dynamic";
 import { AlertTriangle, Download, FolderOpen, GitBranch, List, RotateCcw, Save, Slash, Type } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ActiveTool, type AnnotationBackgroundStyle, type KartMotorHandle } from "@/components/KartMotor";
+import { type ActiveTool, type AnnotationBackgroundStyle, type ExportFormat, type ExportResolution, type KartMotorHandle, type LineDirection } from "@/components/KartMotor";
+import { DEFAULT_EXPORT_RESOLUTION } from "@/lib/mapExport/types";
 
 const KartMotor = dynamic(() => import("@/components/KartMotor"), {
   ssr: false,
@@ -18,6 +19,95 @@ const toolButtonFull =
 
 const quickActionBtn =
   "flex flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-2 text-center text-[10px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 active:scale-95";
+
+const roadSegmentTools: ActiveTool[] = ["closed", "reduced", "pedestrian", "detour"];
+
+const isRoadSegmentTool = (tool: ActiveTool) => roadSegmentTools.includes(tool);
+
+function PilAlternativer({
+  lineDirection,
+  onLineDirectionChange,
+}: {
+  lineDirection: LineDirection;
+  onLineDirectionChange: (direction: LineDirection) => void;
+}) {
+  const optionClass = (active: boolean) =>
+    `flex flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2 text-[11px] font-semibold transition-colors ${
+      active
+        ? "border-blue-600 bg-blue-600 text-white"
+        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+    }`;
+
+  const stroke = (active: boolean) => (active ? "#ffffff" : "#475569");
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      <div className="text-xs font-bold tracking-wide text-slate-500">Piler på strek</div>
+      <div className="grid grid-cols-2 gap-1">
+        <button
+          type="button"
+          onClick={() => onLineDirectionChange("none")}
+          className={optionClass(lineDirection === "none")}
+        >
+          <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden="true">
+            <line
+              x1="4"
+              y1="7"
+              x2="24"
+              y2="7"
+              stroke={stroke(lineDirection === "none")}
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+          </svg>
+          Ingen
+        </button>
+        <button
+          type="button"
+          onClick={() => onLineDirectionChange("forward")}
+          className={optionClass(lineDirection === "forward")}
+        >
+          <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden="true">
+            <path
+              d="M6 3 L20 7 L6 11 Z"
+              fill={stroke(lineDirection === "forward")}
+            />
+          </svg>
+          Pil →
+        </button>
+        <button
+          type="button"
+          onClick={() => onLineDirectionChange("reverse")}
+          className={optionClass(lineDirection === "reverse")}
+        >
+          <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden="true">
+            <path
+              d="M22 3 L8 7 L22 11 Z"
+              fill={stroke(lineDirection === "reverse")}
+            />
+          </svg>
+          Pil ←
+        </button>
+        <button
+          type="button"
+          onClick={() => onLineDirectionChange("both")}
+          className={optionClass(lineDirection === "both")}
+        >
+          <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden="true">
+            <path d="M10 3 L4 7 L10 11 Z" fill={stroke(lineDirection === "both")} />
+            <path d="M18 3 L24 7 L18 11 Z" fill={stroke(lineDirection === "both")} />
+          </svg>
+          Begge
+        </button>
+      </div>
+      <p className="text-[10px] leading-snug text-slate-500">
+        {lineDirection === "none"
+          ? "Klikk en pil for å slette den. Klikk strek for å slette streken."
+          : "Velg retning over, og klikk på en markert strek for å plassere pil."}
+      </p>
+    </div>
+  );
+}
 
 function VisningsBryter({
   id,
@@ -58,11 +148,112 @@ function VisningsBryter({
   );
 }
 
+function EksportPanel({
+  exportPreviewMode,
+  onExportPreviewModeChange,
+  exportFormat,
+  onExportFormatChange,
+  exportResolution,
+  onExportResolutionChange,
+  isExporting,
+  onExport,
+  compact = false,
+}: {
+  exportPreviewMode: boolean;
+  onExportPreviewModeChange: (value: boolean) => void;
+  exportFormat: ExportFormat;
+  onExportFormatChange: (value: ExportFormat) => void;
+  exportResolution: ExportResolution;
+  onExportResolutionChange: (value: ExportResolution) => void;
+  isExporting: boolean;
+  onExport: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border border-slate-200 bg-slate-50 ${compact ? "p-3" : "p-4"}`}>
+      <div className="mb-3 text-xs font-bold tracking-wide text-slate-500">EKSPORT (4:3)</div>
+      <label
+        htmlFor={compact ? "export-preview-mobile" : "export-preview-desktop"}
+        className="mb-3 flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-600"
+      >
+        <input
+          id={compact ? "export-preview-mobile" : "export-preview-desktop"}
+          type="checkbox"
+          checked={exportPreviewMode}
+          onChange={(event) => onExportPreviewModeChange(event.target.checked)}
+          className="peer sr-only"
+        />
+        <span
+          className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+            exportPreviewMode ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"
+          }`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full transition-colors ${
+              exportPreviewMode ? "bg-white" : "bg-transparent"
+            }`}
+          />
+        </span>
+        <span>Vis 4:3-forhåndsvisning</span>
+      </label>
+      <p className="mb-3 text-[11px] leading-snug text-slate-500">
+        Juster utsnittet i kartet før du laster ned. Filen eksporteres i standard 4:3-format.
+      </p>
+      <div className="mb-3">
+        <label
+          htmlFor={compact ? "export-format-mobile" : "export-format-desktop"}
+          className="mb-1 block text-[11px] font-semibold text-slate-500"
+        >
+          Format
+        </label>
+        <select
+          id={compact ? "export-format-mobile" : "export-format-desktop"}
+          value={exportFormat}
+          onChange={(event) => onExportFormatChange(event.target.value as ExportFormat)}
+          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-medium text-slate-700"
+        >
+          <option value="pdf">PDF (anbefalt for utskrift/Adobe)</option>
+          <option value="svg">SVG (redigerbar i Illustrator)</option>
+          <option value="png">PNG (bilde)</option>
+        </select>
+      </div>
+      <div className="mb-4">
+        <label
+          htmlFor={compact ? "export-resolution-mobile" : "export-resolution-desktop"}
+          className="mb-1 block text-[11px] font-semibold text-slate-500"
+        >
+          Oppløsning
+        </label>
+        <select
+          id={compact ? "export-resolution-mobile" : "export-resolution-desktop"}
+          value={exportResolution}
+          onChange={(event) => onExportResolutionChange(event.target.value as ExportResolution)}
+          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-medium text-slate-700"
+        >
+          <option value="1600x1200">1600 × 1200</option>
+          <option value="2400x1800">2400 × 1800</option>
+          <option value="3200x2400">3200 × 2400</option>
+        </select>
+      </div>
+      <button
+        type="button"
+        onClick={onExport}
+        disabled={isExporting}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-blue-700 bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-blue-700 hover:-translate-y-0.5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <Download className="h-5 w-5 shrink-0" />
+        {isExporting ? "Eksporterer …" : "Last ned kart"}
+      </button>
+    </div>
+  );
+}
+
 export default function LagKartPage() {
   const mapRef = useRef<KartMotorHandle | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [activeTool, setActiveTool] = useState<ActiveTool>("none");
   const [isManualMode, setIsManualMode] = useState(false);
+  const [isStretchSelect, setIsStretchSelect] = useState(false);
   const [onClear, setOnClear] = useState(0);
   const [onUndo, setOnUndo] = useState(0);
   const [showLegend, setShowLegend] = useState(true);
@@ -76,6 +267,11 @@ export default function LagKartPage() {
   } | null>(null);
   const [showPlaceLabels, setShowPlaceLabels] = useState(true);
   const [showRoadLabels, setShowRoadLabels] = useState(true);
+  const [lineDirection, setLineDirection] = useState<LineDirection>("none");
+  const [exportPreviewMode, setExportPreviewMode] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
+  const [exportResolution, setExportResolution] = useState<ExportResolution>(DEFAULT_EXPORT_RESOLUTION);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
@@ -84,6 +280,12 @@ export default function LagKartPage() {
   useEffect(() => {
     document.title = "Lag omkjøringskart - eirnat.no";
   }, []);
+
+  useEffect(() => {
+    if (!isRoadSegmentTool(activeTool)) {
+      setIsStretchSelect(false);
+    }
+  }, [activeTool]);
 
   useEffect(() => {
     const handleUndoShortcut = (event: KeyboardEvent) => {
@@ -140,6 +342,19 @@ export default function LagKartPage() {
     setActiveTool("none");
   }, []);
 
+  const handleExport = useCallback(async () => {
+    if (!mapRef.current || isExporting) return;
+    setIsExporting(true);
+    try {
+      await mapRef.current.exportMap({ format: exportFormat, resolution: exportResolution });
+    } catch (error) {
+      console.error("Eksport feilet:", error);
+      window.alert("Klarte ikke å eksportere kartet. Prøv igjen.");
+    } finally {
+      setIsExporting(false);
+    }
+  }, [exportFormat, exportResolution, isExporting]);
+
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       {!isMounted ? (
@@ -170,7 +385,9 @@ export default function LagKartPage() {
                       <span className="font-medium">Tegn:</span> Velg
                       &quot;Stengt veg&quot;, &quot;Redusert fremkommelighet&quot; (oransje)
                       eller &quot;Alternativ rute&quot; og trykk på veglenkene. (Tips: En
-                      linje er nok selv om både vei og fortau stenges).
+                      linje er nok selv om både vei og fortau stenges). Aktiver
+                      &quot;Strekvalg&quot; for å markere alle bit mellom to punkter på
+                      samme vei.
                     </li>
                     <li>
                       <span className="font-medium">Plasser skilt:</span> Sett ut
@@ -187,8 +404,8 @@ export default function LagKartPage() {
                       endrer utsnittet).
                     </li>
                     <li>
-                      <span className="font-medium">Last ned:</span> Trykk på
-                      &quot;Last ned som PNG&quot; for å lagre kartet på din maskin.
+                      <span className="font-medium">Last ned:</span> Aktiver 4:3-forhåndsvisning,
+                      juster utsnittet og last ned som PDF, SVG eller PNG.
                     </li>
                   </ol>
                 </div>
@@ -207,7 +424,11 @@ export default function LagKartPage() {
                   id="manual-mode-desktop"
                   type="checkbox"
                   checked={isManualMode}
-                  onChange={(event) => setIsManualMode(event.target.checked)}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIsManualMode(checked);
+                    if (checked) setIsStretchSelect(false);
+                  }}
                   className="peer sr-only"
                 />
                 <span
@@ -225,6 +446,45 @@ export default function LagKartPage() {
                 </span>
                 <span>Frihåndstegning</span>
               </label>
+              {isRoadSegmentTool(activeTool) && (
+                <>
+                  <label
+                    htmlFor="stretch-select-desktop"
+                    className="mb-3 flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700"
+                  >
+                    <input
+                      id="stretch-select-desktop"
+                      type="checkbox"
+                      checked={isStretchSelect}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setIsStretchSelect(checked);
+                        if (checked) setIsManualMode(false);
+                      }}
+                      className="peer sr-only"
+                    />
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                        isStretchSelect
+                          ? "border-blue-600 bg-blue-600"
+                          : "border-slate-300 bg-white"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                          isStretchSelect ? "bg-white" : "bg-transparent"
+                        }`}
+                      />
+                    </span>
+                    <span>Strekvalg</span>
+                  </label>
+                  {isStretchSelect && (
+                    <p className="mb-3 text-xs text-slate-500">
+                      Klikk startpunkt, deretter sluttpunkt på samme vei.
+                    </p>
+                  )}
+                </>
+              )}
               <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-4 gap-1">
                   <button
@@ -288,6 +548,13 @@ export default function LagKartPage() {
                     <span>Fotg./sykkel</span>
                   </button>
                 </div>
+
+                {isRoadSegmentTool(activeTool) && (
+                  <PilAlternativer
+                    lineDirection={lineDirection}
+                    onLineDirectionChange={setLineDirection}
+                  />
+                )}
 
                 <div className="grid grid-cols-4 gap-1">
                   <button
@@ -400,14 +667,16 @@ export default function LagKartPage() {
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => mapRef.current?.downloadAsPng()}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-blue-700 bg-blue-600 px-4 py-4 text-sm font-semibold text-white shadow-md transition-all hover:bg-blue-700 hover:-translate-y-0.5 active:scale-[0.98]"
-            >
-              <Download className="h-5 w-5 shrink-0" />
-              Last ned kartbilde (PNG)
-            </button>
+            <EksportPanel
+              exportPreviewMode={exportPreviewMode}
+              onExportPreviewModeChange={setExportPreviewMode}
+              exportFormat={exportFormat}
+              onExportFormatChange={setExportFormat}
+              exportResolution={exportResolution}
+              onExportResolutionChange={setExportResolution}
+              isExporting={isExporting}
+              onExport={() => void handleExport()}
+            />
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -449,7 +718,11 @@ export default function LagKartPage() {
                   id="manual-mode-mobile"
                   type="checkbox"
                   checked={isManualMode}
-                  onChange={(event) => setIsManualMode(event.target.checked)}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIsManualMode(checked);
+                    if (checked) setIsStretchSelect(false);
+                  }}
                   className="peer sr-only"
                 />
                 <span
@@ -467,6 +740,45 @@ export default function LagKartPage() {
                 </span>
                 <span>Frihåndstegning</span>
               </label>
+              {isRoadSegmentTool(activeTool) && (
+                <>
+                  <label
+                    htmlFor="stretch-select-mobile"
+                    className="flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700"
+                  >
+                    <input
+                      id="stretch-select-mobile"
+                      type="checkbox"
+                      checked={isStretchSelect}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setIsStretchSelect(checked);
+                        if (checked) setIsManualMode(false);
+                      }}
+                      className="peer sr-only"
+                    />
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                        isStretchSelect
+                          ? "border-blue-600 bg-blue-600"
+                          : "border-slate-300 bg-white"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                          isStretchSelect ? "bg-white" : "bg-transparent"
+                        }`}
+                      />
+                    </span>
+                    <span>Strekvalg</span>
+                  </label>
+                  {isStretchSelect && (
+                    <p className="text-xs text-slate-500">
+                      Klikk startpunkt, deretter sluttpunkt på samme vei.
+                    </p>
+                  )}
+                </>
+              )}
               <div className="grid grid-cols-5 gap-2">
                 <button
                   type="button"
@@ -559,6 +871,13 @@ export default function LagKartPage() {
                   <span className="leading-tight">Angre</span>
                 </button>
               </div>
+
+              {isRoadSegmentTool(activeTool) && (
+                <PilAlternativer
+                  lineDirection={lineDirection}
+                  onLineDirectionChange={setLineDirection}
+                />
+              )}
 
               <div className="grid grid-cols-4 gap-1">
                 <button
@@ -677,14 +996,17 @@ export default function LagKartPage() {
               Tøm kart
             </button>
 
-            <button
-              type="button"
-              onClick={() => mapRef.current?.downloadAsPng()}
-              className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border-2 border-blue-700 bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-blue-700 hover:-translate-y-0.5 active:scale-[0.98]"
-            >
-              <Download className="h-5 w-5 shrink-0" />
-              Last ned kartbilde (PNG)
-            </button>
+            <EksportPanel
+              exportPreviewMode={exportPreviewMode}
+              onExportPreviewModeChange={setExportPreviewMode}
+              exportFormat={exportFormat}
+              onExportFormatChange={setExportFormat}
+              exportResolution={exportResolution}
+              onExportResolutionChange={setExportResolution}
+              isExporting={isExporting}
+              onExport={() => void handleExport()}
+              compact
+            />
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -724,12 +1046,15 @@ export default function LagKartPage() {
             showRoadLabels={showRoadLabels}
             activeTool={activeTool}
             manualModeEnabled={isManualMode}
+            stretchSelectEnabled={isStretchSelect}
             onClear={onClear}
             onUndo={onUndo}
             editingAnnotation={editingAnnotation}
             onEditingAnnotationChange={handleEditingAnnotationChange}
             showLegend={showLegend}
+            lineDirection={lineDirection}
             onTextAnnotationCreated={handleTextAnnotationCreated}
+            exportPreviewMode={exportPreviewMode}
           />
         </section>
       </div>
