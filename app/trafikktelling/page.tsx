@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   Car,
   Bus,
   Truck,
   Motorbike,
-  Globe,
   BadgeCheck,
   User,
   Briefcase,
@@ -17,35 +16,27 @@ import Link from "next/link";
 import { DashboardSection } from "./DashboardSection";
 import { GOOGLE_SCRIPT_URL } from "./google-script";
 
-// Live klokke (viser "Nå: HH:MM:SS", oppdateres hvert sekund)
-function useLiveClock() {
-  const [time, setTime] = useState(() => {
-    const now = new Date();
-    return now.toLocaleTimeString("nb-NO", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+function formatClock(date: Date) {
+  return date.toLocaleTimeString("nb-NO", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
   });
+}
+
+function useLiveClock() {
+  const [time, setTime] = useState("--:--:--");
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date();
-      setTime(
-        now.toLocaleTimeString("nb-NO", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      );
-    }, 1000);
+    const update = () => setTime(formatClock(new Date()));
+    update();
+    const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, []);
 
   return time;
 }
 
-// GPS ved sidelasting
 function useGeolocation() {
   const [gps, setGps] = useState<{ lat: number | null; lng: number | null }>({
     lat: null,
@@ -74,48 +65,15 @@ function useGeolocation() {
   return { gps, gpsStatus };
 }
 
-// Land med navn, emoji-flag og country codes til ev framtidig bruk
 const FLAG_COUNTRIES = [
-  {
-    name: "Norge",
-    emoji: "🇳🇴",
-    code: "NO",
-  },
-  {
-    name: "Sverige",
-    emoji: "🇸🇪",
-    code: "SE",
-  },
-  {
-    name: "Danmark",
-    emoji: "🇩🇰",
-    code: "DK",
-  },
-  {
-    name: "Tyskland",
-    emoji: "🇩🇪",
-    code: "DE",
-  },
-  {
-    name: "Polen",
-    emoji: "🇵🇱",
-    code: "PL",
-  },
-  {
-    name: "Litauen",
-    emoji: "🇱🇹",
-    code: "LT",
-  },
-  {
-    name: "Finland",
-    emoji: "🇫🇮",
-    code: "FI",
-  },
-  {
-    name: "Nederland",
-    emoji: "🇳🇱",
-    code: "NL",
-  },
+  { name: "Norge", emoji: "🇳🇴", code: "NO" },
+  { name: "Sverige", emoji: "🇸🇪", code: "SE" },
+  { name: "Danmark", emoji: "🇩🇰", code: "DK" },
+  { name: "Tyskland", emoji: "🇩🇪", code: "DE" },
+  { name: "Polen", emoji: "🇵🇱", code: "PL" },
+  { name: "Litauen", emoji: "🇱🇹", code: "LT" },
+  { name: "Finland", emoji: "🇫🇮", code: "FI" },
+  { name: "Nederland", emoji: "🇳🇱", code: "NL" },
 ];
 
 const EXCLUDED_REGION_CODES = new Set([
@@ -156,66 +114,56 @@ function getAllCountryOptions() {
   return countries;
 }
 
-const ALL_COUNTRIES = getAllCountryOptions();
+function useCountryOptions() {
+  const [countries, setCountries] = useState<{ code: string; name: string }[]>(
+    []
+  );
+
+  useEffect(() => {
+    setCountries(getAllCountryOptions());
+  }, []);
+
+  return countries;
+}
+
 const TRAFFIC_TYPES = [
-  {
-    key: "privat",
-    label: "Privat",
-    icon: User,
-    color: "text-meadow",
-  },
-  {
-    key: "yrkes",
-    label: "Yrkestrafikk",
-    icon: Briefcase,
-    color: "text-meadow",
-  },
+  { key: "privat", label: "Privat", icon: User },
+  { key: "yrkes", label: "Yrkestrafikk", icon: Briefcase },
 ];
 
 const CAR_TYPES = [
-  {
-    key: "personbil",
-    label: "Personbil",
-    icon: Car,
-    color: "text-meadow",
-  },
-  {
-    key: "lastebil",
-    label: "Lastebil",
-    icon: Truck,
-    color: "text-meadow",
-  },
-  {
-    key: "buss",
-    label: "Buss",
-    icon: Bus,
-    color: "text-meadow",
-  },
-  {
-    key: "motorsykkel",
-    label: "Motorsykkel",
-    icon: Motorbike,
-    color: "text-meadow",
-  },
-  {
-    key: "annet",
-    label: "Annet",
-    icon: MoreHorizontal,
-    color: "text-meadow",
-  },
+  { key: "personbil", label: "Personbil", icon: Car },
+  { key: "lastebil", label: "Lastebil", icon: Truck },
+  { key: "buss", label: "Buss", icon: Bus },
+  { key: "motorsykkel", label: "Motorsykkel", icon: Motorbike },
+  { key: "annet", label: "Annet", icon: MoreHorizontal },
 ];
+
+const STEPS = [
+  { id: 0, label: "Land" },
+  { id: 1, label: "Trafikk" },
+  { id: 2, label: "Kjøretøy" },
+] as const;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function choiceClass(selected: boolean) {
+  return (
+    "flex min-h-20 flex-col items-center justify-center border-2 px-2 py-4 text-center font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue disabled:cursor-not-allowed disabled:opacity-40 " +
+    (selected
+      ? "border-vv-orange bg-vv-ink text-white"
+      : "border-vv-gray bg-white text-vv-ink hover:border-vv-ink")
+  );
+}
+
 export default function TrafikktellerPage() {
   const liveTime = useLiveClock();
   const { gps, gpsStatus } = useGeolocation();
+  const allCountries = useCountryOptions();
 
-  // Stegvalg (0=land, 1=trafikktype, 2=biltype)
   const [step, setStep] = useState(0);
-
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedTraffic, setSelectedTraffic] = useState<string | null>(null);
   const [selectedCar, setSelectedCar] = useState<string | null>(null);
@@ -224,33 +172,36 @@ export default function TrafikktellerPage() {
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  // refs til seksjonene for smooth scroll
-  const step1Ref = useRef<HTMLDivElement>(null);
-  const step2Ref = useRef<HTMLDivElement>(null);
-  const step3Ref = useRef<HTMLDivElement>(null);
-  const resultatRef = useRef<HTMLDivElement>(null);
+  const readyToSend = Boolean(selectedCountry && selectedTraffic && selectedCar);
 
-  // Scroll til ønsket steg (smooth)
-  function scrollToRef(ref: React.RefObject<HTMLDivElement | null>) {
-    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  function countryName(code: string | null) {
+    if (!code) return null;
+    return (
+      FLAG_COUNTRIES.find((c) => c.code === code)?.name ??
+      allCountries.find((c) => c.code === code)?.name ??
+      code
+    );
   }
 
-  // Håndter valg og auto-scroll til neste steg
+  function canOpenStep(index: number) {
+    if (index === 0) return true;
+    if (index === 1) return Boolean(selectedCountry);
+    return Boolean(selectedCountry && selectedTraffic);
+  }
+
   function velgLand(code: string) {
     setSelectedCountry(code);
     setTimeout(() => {
       setStep(1);
-      scrollToRef(step2Ref);
-    }, 180); // la brev animasjonen på valgt flagg få vises
+    }, 180);
   }
 
   function velgLandDropdown(event: React.ChangeEvent<HTMLSelectElement>) {
     const code = event.target.value;
-    setSelectedCountry(code);
+    setSelectedCountry(code || null);
     if (code) {
       setTimeout(() => {
         setStep(1);
-        scrollToRef(step2Ref);
       }, 180);
     }
   }
@@ -259,13 +210,11 @@ export default function TrafikktellerPage() {
     setSelectedTraffic(key);
     setTimeout(() => {
       setStep(2);
-      scrollToRef(step3Ref);
     }, 180);
   }
 
   function velgBil(key: string) {
     setSelectedCar(key);
-    // Ikke auto-scroll, vis skjema-knapp istedet
   }
 
   async function sendData() {
@@ -282,7 +231,6 @@ export default function TrafikktellerPage() {
         method: "POST",
         mode: "no-cors",
         headers: {
-          // no-cors tillater bare enkle Content-Type-verdier; Apps Script kan likevel parse JSON fra body
           "Content-Type": "text/plain",
         },
         body: JSON.stringify({
@@ -294,9 +242,6 @@ export default function TrafikktellerPage() {
         }),
       });
       setSent(true);
-      setTimeout(() => {
-        scrollToRef(resultatRef);
-      }, 120);
       await sleep(1300);
       setSelectedCountry(null);
       setSelectedTraffic(null);
@@ -309,204 +254,233 @@ export default function TrafikktellerPage() {
     }
   }
 
+  const gpsLabel =
+    gpsStatus === "pending"
+      ? "Henter posisjon"
+      : gpsStatus === "success"
+        ? "Posisjon hentet"
+        : "GPS ikke tilgjengelig";
+
+  const summary = [
+    countryName(selectedCountry),
+    TRAFFIC_TYPES.find((t) => t.key === selectedTraffic)?.label,
+    CAR_TYPES.find((c) => c.key === selectedCar)?.label,
+  ].filter(Boolean);
+
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      {/* Topptittel */}
-      <div className="border-b border-slate-200 bg-slate-50">
-        <div className="max-w-7xl mx-auto px-6 pt-2 pb-1 text-center text-xs text-slate-600/70 tabular-nums">
-          Nå: {liveTime}
-        </div>
-        <div className="max-w-7xl mx-auto px-6 pb-1 text-center text-xs text-slate-600/70">
-          {gpsStatus === "pending" && "Henter posisjon..."}
-          {gpsStatus === "success" && "📍 Posisjon hentet"}
-          {gpsStatus === "failure" && "⚠️ GPS ikke tilgjengelig"}
-        </div>
-        <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Tilbake til forsiden
-          </Link>
-          <h1 className="text-lg md:text-2xl font-black tracking-tight text-slate-900 flex items-center gap-2">
-            <Globe className="h-6 w-6 text-blue-600" />
-            Telleverktøy: Trafikktelling (3 steg)
-          </h1>
+    <main className={readyToSend ? "pb-28" : undefined}>
+      <div className="flex h-2" aria-hidden="true">
+        <div className="flex-1 bg-vv-orange" />
+        <div className="flex-1 bg-vv-ink" />
+        <div className="flex-1 bg-vv-gray" />
+      </div>
+
+      <div className="flex min-h-10 flex-col sm:flex-row">
+        <h1 className="bg-vv-ink px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.1em] text-white sm:shrink-0">
+          Trafikktelling
+        </h1>
+        <p className="flex-1 bg-vv-orange px-4 py-2.5 text-xs tracking-[0.1em] text-vv-ink">
+          registrer kjøretøy
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 border-b border-vv-gray px-4 py-3 sm:px-6">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 text-sm text-vv-blue underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Tilbake til forsiden
+        </Link>
+        <div className="text-right text-xs text-vv-ink">
+          <div className="tabular-nums">Nå: {liveTime}</div>
+          <div>{gpsLabel}</div>
         </div>
       </div>
 
-      {/* Steg 1: Land */}
-      <section ref={step1Ref} className="px-6 py-14 md:py-20">
-        <div className="max-w-4xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-6 md:p-8">
-          <div className="max-w-2xl mx-auto text-center mb-4">
-            <div className="text-blue-700 font-semibold uppercase tracking-widest mb-2">
-              Steg 1
-            </div>
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-2">
-              Velg land
-            </h2>
-            <p className="text-base md:text-lg text-slate-600">
-              Hvilket land har kjøretøyet tilhørighet til?
-            </p>
-          </div>
-          <div className="max-w-lg mx-auto grid grid-cols-4 gap-3 md:gap-5 mb-4 pt-2">
-            {FLAG_COUNTRIES.map((c) => (
+      <section className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <div className="grid grid-cols-3 border border-vv-gray" role="tablist" aria-label="Steg">
+          {STEPS.map((item, index) => {
+            const open = canOpenStep(item.id);
+            const active = step === item.id;
+            return (
               <button
-                key={c.code}
-                aria-label={c.name}
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`steg-tab-${item.id}`}
+                aria-selected={active}
+                aria-controls={`steg-panel-${item.id}`}
+                disabled={!open}
+                onClick={() => setStep(item.id)}
                 className={
-                  `transition-all flex flex-col items-center justify-center border-2 rounded-xl py-3 md:py-4 text-3xl md:text-4xl shadow-sm font-medium ` +
-                  (selectedCountry === c.code
-                    ? `border-blue-600 bg-blue-600 text-white ring-2 ring-blue-200`
-                    : `border-slate-200 bg-white hover:border-blue-300 text-slate-700`)
+                  "px-2 py-3 text-xs font-semibold uppercase tracking-[0.08em] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-vv-blue disabled:cursor-not-allowed sm:text-sm " +
+                  (active
+                    ? "border-t-4 border-t-vv-orange bg-vv-ink text-white"
+                    : open
+                      ? "bg-white text-vv-ink hover:bg-vv-mist"
+                      : "bg-vv-mist text-vv-ink/45")
                 }
-                onClick={() => velgLand(c.code)}
               >
-                <span className="mb-1">{c.emoji}</span>
-                <span className="text-xs md:text-[13px] font-medium text-current mb-0.5">
-                  {c.name}
-                </span>
+                {index + 1} {item.label}
               </button>
-            ))}
-          </div>
-          <div className="max-w-xs mx-auto mt-2">
-            <select
-              className="w-full rounded-lg border border-slate-200 px-4 py-2 text-base md:text-lg bg-white appearance-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-200 mt-1"
-              value={selectedCountry ?? ""}
-              onChange={velgLandDropdown}
-              aria-label="Velg land"
-            >
-              <option value="">Velg land...</option>
-              {ALL_COUNTRIES.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
+            );
+          })}
         </div>
-      </section>
 
-      {/* Steg 2: Trafikktype */}
-      <section
-        ref={step2Ref}
-        className={`px-6 py-14 md:py-20 transition-opacity duration-300 ${step >= 1 ? "opacity-100" : "opacity-70 pointer-events-none select-none"}`}
-      >
-        <div className="max-w-4xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-6 md:p-8">
-          <div className="max-w-2xl mx-auto text-center mb-4">
-            <div className="text-blue-700 font-semibold uppercase tracking-widest mb-2">
-              Steg 2
-            </div>
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-2">
-              Trafikktype
-            </h2>
-            <p className="text-base md:text-lg text-slate-600">
-              Hvilken type trafikk dreier det seg om?
-            </p>
-          </div>
-          <div className="max-w-lg mx-auto grid grid-cols-2 gap-5 pt-3">
-            {TRAFFIC_TYPES.map((t) => (
-              <button
-                key={t.key}
-                aria-label={t.label}
-                className={
-                  `transition-all flex flex-col items-center justify-center border-2 rounded-2xl py-6 shadow-md font-semibold text-xl md:text-2xl ` +
-                  (selectedTraffic === t.key
-                    ? `border-blue-600 bg-blue-600 text-white ring-2 ring-blue-200`
-                    : `border-slate-200 bg-white hover:border-blue-300 text-slate-700`)
-                }
-                onClick={() => velgTrafikk(t.key)}
-                disabled={!selectedCountry || (!!selectedTraffic && selectedTraffic !== t.key)}
-              >
-                <t.icon className={`mb-2 h-10 w-10 ${selectedTraffic === t.key ? "text-white" : "text-blue-600"}`} />
-                <span className="tracking-tight">{t.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
+        {summary.length > 0 && step > 0 && (
+          <p className="mt-4 text-sm text-vv-ink">{summary.join(" · ")}</p>
+        )}
 
-      {/* Steg 3: Biltype */}
-      <section
-        ref={step3Ref}
-        className={`px-6 py-14 md:py-20 transition-opacity duration-300 ${step >= 2 ? "opacity-100" : "opacity-70 pointer-events-none select-none"}`}
-      >
-        <div className="max-w-4xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-6 md:p-8">
-          <div className="max-w-2xl mx-auto text-center mb-4">
-            <div className="text-blue-700 font-semibold uppercase tracking-widest mb-2">
-              Steg 3
-            </div>
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-2">
-              Biltype
-            </h2>
-            <p className="text-base md:text-lg text-slate-600">
-              Hvilken type kjøretøy gjelder tellingen?
-            </p>
-          </div>
-
-          <div className="max-w-2xl mx-auto grid grid-cols-2 md:grid-cols-5 gap-4 pt-2">
-            {CAR_TYPES.map((c) => (
-              <button
-                key={c.key}
-                aria-label={c.label}
-                className={
-                  `transition-all flex flex-col items-center justify-center border-2 rounded-2xl py-7 px-0 shadow-md font-semibold text-lg md:text-xl ` +
-                  (selectedCar === c.key
-                    ? `border-blue-600 bg-blue-600 text-white ring-2 ring-blue-200`
-                    : `border-slate-200 bg-white hover:border-blue-300 text-slate-700`)
-                }
-                onClick={() => velgBil(c.key)}
-                disabled={!selectedTraffic || (!!selectedCar && selectedCar !== c.key)}
-              >
-                <c.icon className={`mb-2 h-8 w-8 ${selectedCar === c.key ? "text-white" : "text-blue-600"}`} />
-                <span className="tracking-tight">{c.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Bekreft-knapp */}
-      <div className="max-w-lg mx-auto mt-12 mb-8 bg-white border border-slate-200 rounded-2xl shadow-sm p-6 flex flex-col items-center">
-        <button
-          type="button"
-          disabled={
-            !selectedCountry || !selectedTraffic || !selectedCar || sending
-          }
-          className={
-            "w-full rounded-lg px-8 py-5 bg-blue-600 text-white shadow-2xl font-extrabold text-2xl tracking-tight transition-all hover:bg-blue-700 focus:bg-blue-700 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
-          }
-          onClick={sendData}
+        <div
+          role="tabpanel"
+          id={`steg-panel-${step}`}
+          aria-labelledby={`steg-tab-${step}`}
+          className="mt-8"
         >
-          {sending ? "Sender..." : "Bekreft og send"}
-        </button>
+          {step === 0 && (
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                Velg land
+              </h2>
+              <p className="mt-2 text-base">
+                Hvilket land har kjøretøyet tilhørighet til?
+              </p>
+              <div className="mt-6 grid grid-cols-4 gap-3">
+                {FLAG_COUNTRIES.map((c) => (
+                  <button
+                    key={c.code}
+                    type="button"
+                    aria-label={c.name}
+                    aria-pressed={selectedCountry === c.code}
+                    className={choiceClass(selectedCountry === c.code)}
+                    onClick={() => velgLand(c.code)}
+                  >
+                    <span className="text-2xl leading-none sm:text-3xl" aria-hidden="true">
+                      {c.emoji}
+                    </span>
+                    <span className="mt-2 text-xs font-normal sm:text-sm">{c.name}</span>
+                  </button>
+                ))}
+              </div>
+              <label className="mt-6 block max-w-sm text-sm">
+                <span className="mb-1 block">Andre land</span>
+                <select
+                  className="w-full border-2 border-vv-gray bg-white px-3 py-3 text-base text-vv-ink focus:border-vv-ink focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue"
+                  value={selectedCountry ?? ""}
+                  onChange={velgLandDropdown}
+                  aria-label="Velg land"
+                >
+                  <option value="">Velg land</option>
+                  {allCountries.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                Trafikktype
+              </h2>
+              <p className="mt-2 text-base">Hvilken type trafikk dreier det seg om?</p>
+              <div className="mt-6 grid grid-cols-2 gap-3">
+                {TRAFFIC_TYPES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    aria-label={t.label}
+                    aria-pressed={selectedTraffic === t.key}
+                    className={choiceClass(selectedTraffic === t.key) + " min-h-32 text-lg sm:text-xl"}
+                    onClick={() => velgTrafikk(t.key)}
+                    disabled={
+                      !selectedCountry ||
+                      (!!selectedTraffic && selectedTraffic !== t.key)
+                    }
+                  >
+                    <t.icon
+                      className={`mb-2 h-8 w-8 ${selectedTraffic === t.key ? "text-white" : "text-vv-ink"}`}
+                      aria-hidden="true"
+                    />
+                    <span>{t.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                Kjøretøy
+              </h2>
+              <p className="mt-2 text-base">Hvilken type kjøretøy gjelder tellingen?</p>
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                {CAR_TYPES.map((c) => (
+                  <button
+                    key={c.key}
+                    type="button"
+                    aria-label={c.label}
+                    aria-pressed={selectedCar === c.key}
+                    className={choiceClass(selectedCar === c.key) + " min-h-28 text-sm sm:text-base"}
+                    onClick={() => velgBil(c.key)}
+                    disabled={
+                      !selectedTraffic || (!!selectedCar && selectedCar !== c.key)
+                    }
+                  >
+                    <c.icon
+                      className={`mb-2 h-7 w-7 ${selectedCar === c.key ? "text-white" : "text-vv-ink"}`}
+                      aria-hidden="true"
+                    />
+                    <span>{c.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         {sendError && (
-          <div className="mt-4 text-red-600 text-center text-base font-medium">
+          <div
+            className="mt-6 border border-vv-red bg-vv-red-bg px-4 py-3 text-sm text-vv-red"
+            role="alert"
+          >
             {sendError}
           </div>
         )}
-      </div>
 
-      <div className="max-w-4xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-6 md:p-8">
-        <DashboardSection />
-      </div>
-
-      {/* Bekreftelse */}
-      <div ref={resultatRef} className="max-w-xl mx-auto px-6 pb-20 md:pb-28 min-h-[70px] flex items-center justify-center">
         {sent && (
-          <div className="rounded-2xl bg-blue-50 border border-blue-200 flex flex-col items-center gap-2 px-7 py-6 shadow mt-2">
-            <BadgeCheck className="h-8 w-8 text-blue-600 mb-1" />
-            <div className="text-lg text-slate-900 font-semibold mb-0.5">
-              Tellingen er registrert!
-            </div>
-            <div className="text-base text-slate-600">
-              Takk for bidraget.
+          <div className="mt-6 flex items-start gap-3 border border-vv-green bg-vv-green-bg px-4 py-4">
+            <BadgeCheck className="mt-0.5 h-6 w-6 shrink-0 text-vv-green" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">Tellingen er registrert</p>
+              <p className="mt-1 text-sm">Takk for bidraget.</p>
             </div>
           </div>
         )}
-      </div>
+      </section>
 
+      <DashboardSection />
+
+      {readyToSend && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-vv-gray bg-white px-4 py-3 sm:px-6">
+          <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center">
+            <p className="min-w-0 flex-1 text-sm text-vv-ink">{summary.join(" · ")}</p>
+            <button
+              type="button"
+              disabled={sending}
+              className="bg-vv-ink px-6 py-4 text-base font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue disabled:cursor-not-allowed disabled:opacity-60 sm:shrink-0"
+              onClick={sendData}
+            >
+              {sending ? "Sender" : "Bekreft og send"}
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

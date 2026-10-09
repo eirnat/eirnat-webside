@@ -6,16 +6,17 @@ import L from "leaflet";
 import Chart from "chart.js/auto";
 import "leaflet/dist/leaflet.css";
 
-/** Samme palett som globals.css */
+/** R902-palett, samme verdier som .trafikktelling i globals.css */
 export const THEME = {
-  background: "#f6f1e9",
-  foreground: "#2b2d42",
-  meadow: "#a7c957",
-  terra: "#bc6c49",
+  background: "#ffffff",
+  foreground: "#444f55",
+  orange: "#ff9600",
+  blue: "#077197",
+  green: "#158925",
+  gray: "#dadada",
 };
 
-const FONT =
-  'var(--font-lexend), Lexend, "Helvetica Neue", Arial, sans-serif';
+const FONT_FALLBACK = "Arial, Helvetica, sans-serif";
 
 /** Grovt landssenter for markører når telling mangler GPS */
 const COUNTRY_CENTROIDS = {
@@ -145,15 +146,13 @@ async function fetchTellingRows(dataUrl) {
   return Array.isArray(data) ? data : [];
 }
 
-function fixLeafletIcons() {
-  delete L.Icon.Default.prototype._getIconUrl;
-  L.Icon.Default.mergeOptions({
-    iconRetinaUrl:
-      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-    iconUrl:
-      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-    shadowUrl:
-      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+function countMarker() {
+  return L.divIcon({
+    className: "vv-count-marker",
+    html: "",
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    popupAnchor: [0, -10],
   });
 }
 
@@ -161,22 +160,24 @@ function chartTextColor() {
   return THEME.foreground;
 }
 
-const commonChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      labels: {
-        color: chartTextColor,
-        font: { family: FONT, size: 12 },
+function chartOptions(fontFamily) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: {
+          color: chartTextColor(),
+          font: { family: fontFamily, size: 12 },
+        },
+      },
+      tooltip: {
+        bodyFont: { family: fontFamily },
+        titleFont: { family: fontFamily },
       },
     },
-    tooltip: {
-      bodyFont: { family: FONT },
-      titleFont: { family: FONT },
-    },
-  },
-};
+  };
+}
 
 /**
  * @param {HTMLElement} root
@@ -185,7 +186,10 @@ const commonChartOptions = {
  * @returns {Promise<() => void>}
  */
 export async function createDashboard(root, options = {}) {
-  fixLeafletIcons();
+  const fontFamily =
+    getComputedStyle(root).fontFamily || FONT_FALLBACK;
+  const commonChartOptions = chartOptions(fontFamily);
+  const countIcon = countMarker();
 
   let rows = [];
   try {
@@ -227,20 +231,20 @@ export async function createDashboard(root, options = {}) {
 
   if (gpsPoints.length > 0) {
     for (const p of gpsPoints) {
-      const marker = L.marker([p.lat, p.lng]).addTo(map);
+      const marker = L.marker([p.lat, p.lng], { icon: countIcon }).addTo(map);
       const typeLabel = CAR_LABELS[normalizeCarType(p.row)] ?? p.row.type;
       const landName = regionForMap.of(p.land) || p.land || "?";
       marker.bindPopup(
-        `<strong style="color:${THEME.foreground};font-family:${FONT}">${landName}</strong><br/>` +
+        `<strong style="color:${THEME.foreground};font-family:var(--font-etica),Arial,sans-serif">${landName}</strong><br/>` +
           `<span style="color:${THEME.foreground};opacity:.85">${typeLabel}</span>`
       );
       bounds.push([p.lat, p.lng]);
     }
   } else {
     for (const row of carsPerCountry) {
-      const marker = L.marker([row.lat, row.lng]).addTo(map);
+      const marker = L.marker([row.lat, row.lng], { icon: countIcon }).addTo(map);
       marker.bindPopup(
-        `<strong style="color:${THEME.foreground};font-family:${FONT}">${row.name}</strong><br/>` +
+        `<strong style="color:${THEME.foreground};font-family:var(--font-etica),Arial,sans-serif">${row.name}</strong><br/>` +
           `<span style="color:${THEME.foreground};opacity:.85">${row.count} ${row.count === 1 ? "telling" : "tellinger"}</span>`
       );
       bounds.push([row.lat, row.lng]);
@@ -252,7 +256,7 @@ export async function createDashboard(root, options = {}) {
   }
 
   Chart.defaults.color = THEME.foreground;
-  Chart.defaults.font.family = FONT;
+  Chart.defaults.font.family = fontFamily;
 
   const barLabels = hasRows
     ? carsPerCountry.map((c) => c.name)
@@ -267,10 +271,10 @@ export async function createDashboard(root, options = {}) {
         {
           label: "Antall tellinger",
           data: barData,
-          backgroundColor: `${THEME.meadow}cc`,
-          borderColor: THEME.foreground,
-          borderWidth: 1,
-          borderRadius: 6,
+          backgroundColor: THEME.blue,
+          borderColor: THEME.blue,
+          borderWidth: 0,
+          borderRadius: 0,
         },
       ],
     },
@@ -278,14 +282,14 @@ export async function createDashboard(root, options = {}) {
       ...commonChartOptions,
       scales: {
         x: {
-          ticks: { color: THEME.foreground, font: { family: FONT, size: 11 } },
+          ticks: { color: THEME.foreground, font: { family: fontFamily, size: 11 } },
           grid: { color: `${THEME.foreground}18` },
         },
         y: {
           beginAtZero: true,
           ticks: {
             color: THEME.foreground,
-            font: { family: FONT, size: 11 },
+            font: { family: fontFamily, size: 11 },
             precision: 0,
           },
           grid: { color: `${THEME.foreground}18` },
@@ -298,7 +302,7 @@ export async function createDashboard(root, options = {}) {
           display: true,
           text: hasRows ? "Tellinger per land" : "Tellinger per land (ingen data)",
           color: THEME.foreground,
-          font: { family: FONT, size: 15, weight: "600" },
+          font: { family: fontFamily, size: 15, weight: "600" },
         },
       },
     },
@@ -312,7 +316,7 @@ export async function createDashboard(root, options = {}) {
   const trafficData = trafficTotal > 0 ? [tPriv, tYrk] : [1];
   const trafficColors =
     trafficTotal > 0
-      ? [THEME.meadow, THEME.terra]
+      ? [THEME.blue, THEME.green]
       : [`${THEME.foreground}33`];
 
   const trafficChart = new Chart(trafficCanvas.getContext("2d"), {
@@ -336,7 +340,7 @@ export async function createDashboard(root, options = {}) {
           display: true,
           text: "Privat vs yrkestrafikk",
           color: THEME.foreground,
-          font: { family: FONT, size: 15, weight: "600" },
+          font: { family: fontFamily, size: 15, weight: "600" },
         },
         tooltip: {
           ...commonChartOptions.plugins.tooltip,
@@ -358,11 +362,11 @@ export async function createDashboard(root, options = {}) {
 
   const carKeys = CAR_LABEL_KEYS;
   const carPalette = [
-    THEME.meadow,
-    THEME.terra,
-    `${THEME.meadow}99`,
-    `${THEME.terra}cc`,
-    `${THEME.foreground}55`,
+    THEME.orange,
+    THEME.blue,
+    THEME.green,
+    THEME.foreground,
+    THEME.gray,
   ];
 
   const carTotal = carKeys.reduce((s, k) => s + (carTypes[k] ?? 0), 0);
@@ -392,7 +396,7 @@ export async function createDashboard(root, options = {}) {
           display: true,
           text: "Biltyper",
           color: THEME.foreground,
-          font: { family: FONT, size: 15, weight: "600" },
+          font: { family: fontFamily, size: 15, weight: "600" },
         },
         tooltip: {
           ...commonChartOptions.plugins.tooltip,

@@ -39,43 +39,40 @@ export function DashboardSection() {
 
   return (
     <section
-      className="px-6 py-14 md:py-20 border-t border-foreground/10 bg-background"
+      className="border-t border-vv-gray bg-vv-mist px-4 py-10 sm:px-6"
       aria-labelledby="dashboard-heading"
     >
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-10">
-          <div className="text-meadow font-semibold uppercase tracking-widest mb-2">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-vv-ink">
             Oversikt
-          </div>
+          </p>
           <h2
             id="dashboard-heading"
-            className="text-2xl md:text-3xl font-bold text-foreground tracking-tight"
+            className="mt-2 text-2xl font-semibold tracking-tight text-vv-ink sm:text-3xl"
           >
             Kart og statistikk
           </h2>
-          <p className="mt-2 text-base text-foreground/80 max-w-xl mx-auto">
+          <p className="mt-2 max-w-xl text-base text-vv-ink">
             Diagrammene og kartet oppdateres ut fra tellinger som hentes fra regnearket
             (samme kilde som skjemaet).
           </p>
         </div>
 
-        <div
-          ref={rootRef}
-          className="dashboard-root space-y-8 md:space-y-10"
-        >
-          <div className="rounded-2xl border border-foreground/10 overflow-hidden shadow-md bg-background">
+        <div ref={rootRef} className="dashboard-root space-y-6">
+          <div className="overflow-hidden border border-vv-gray bg-white">
             <div
               data-dashboard-map
-              className="h-[min(420px,70vh)] w-full z-0"
+              className="z-0 h-[min(420px,70vh)] w-full"
               role="presentation"
             />
           </div>
 
-          <div className="grid gap-8 lg:grid-cols-2">
-            <div className="rounded-2xl border border-foreground/10 bg-background p-4 shadow-md min-h-[320px]">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="relative h-80 border border-vv-gray bg-white p-4">
               <canvas data-chart="bars" aria-label="Stolpediagram biler per land" />
             </div>
-            <div className="rounded-2xl border border-foreground/10 bg-background p-4 shadow-md min-h-[300px] flex flex-col justify-center">
+            <div className="relative h-80 border border-vv-gray bg-white p-4">
               <canvas
                 data-chart="traffic"
                 aria-label="Kakediagram privat og yrkestrafikk"
@@ -83,7 +80,7 @@ export function DashboardSection() {
             </div>
           </div>
 
-          <div className="max-w-md mx-auto rounded-2xl border border-foreground/10 bg-background p-4 shadow-md min-h-[300px] flex flex-col justify-center">
+          <div className="relative mx-auto h-80 max-w-md border border-vv-gray bg-white p-4">
             <canvas data-chart="car-types" aria-label="Kakediagram biltyper" />
           </div>
         </div>
