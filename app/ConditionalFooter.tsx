@@ -6,6 +6,8 @@ export default function ConditionalFooter() {
   const pathname = usePathname();
   const shouldHideFooter =
     pathname === "/lag-kart" ||
+    pathname === "/trafikktelling" ||
+    pathname.startsWith("/trafikktelling/") ||
     pathname === "/spillsystemer/petanque" ||
     pathname === "/helge" ||
     pathname.startsWith("/helge/") ||

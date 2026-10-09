@@ -21,10 +21,34 @@
   --color-meadow: var(--accent-primary);
   --color-terra: var(--accent-secondary);
   --font-sans: var(--font-lexend);
+  --color-vv-orange: #ff9600;
+  --color-vv-ink: #444f55;
+  --color-vv-white: #ffffff;
+  --color-vv-gray: #dadada;
+  --color-vv-mist: #f5f5f5;
+  --color-vv-blue: #077197;
+  --color-vv-green: #158925;
+  --color-vv-blue-bg: #e6f1f5;
+  --color-vv-green-bg: #e8f3e9;
+  --color-vv-red: #b63434;
+  --color-vv-red-bg: #fedfe1;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-lexend), Arial, Helvetica, sans-serif;
+}
+
+.trafikktelling {
+  background-color: #ffffff;
+  color: #444f55;
+  font-family: var(--font-etica), Arial, Helvetica, sans-serif;
+}
+
+.vv-count-marker {
+  background-color: #ff9600;
+  border: 2px solid #444f55;
+  border-radius: 50%;
+  box-sizing: border-box;
 }
