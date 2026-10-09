@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { TrafikkTopp } from "./TrafikkTopp";
 
 const etica = localFont({
   src: [
@@ -31,6 +32,7 @@ export default function TrafikktellingLayout({
 }) {
   return (
     <div className={`${etica.variable} trafikktelling min-h-screen`}>
+      <TrafikkTopp />
       {children}
     </div>
   );

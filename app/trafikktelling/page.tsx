@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft,
   Car,
   Bus,
   Truck,
@@ -12,8 +11,6 @@ import {
   Briefcase,
   MoreHorizontal,
 } from "lucide-react";
-import Link from "next/link";
-import { DashboardSection } from "./DashboardSection";
 import { GOOGLE_SCRIPT_URL } from "./google-script";
 
 function formatClock(date: Date) {
@@ -145,8 +142,37 @@ const STEPS = [
   { id: 2, label: "Kjøretøy" },
 ] as const;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const DRAFT_KEY = "trafikktelling-draft";
+
+type Draft = {
+  step: number;
+  country: string | null;
+  traffic: string | null;
+  car: string | null;
+};
+
+function readDraft(): Draft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Partial<Draft>;
+    const country =
+      typeof data.country === "string" && /^[A-Z]{2}$/.test(data.country)
+        ? data.country
+        : null;
+    const traffic =
+      data.traffic === "privat" || data.traffic === "yrkes" ? data.traffic : null;
+    const car =
+      typeof data.car === "string" && CAR_TYPES.some((c) => c.key === data.car)
+        ? data.car
+        : null;
+    let step = data.step === 1 || data.step === 2 ? data.step : 0;
+    if (!country) step = 0;
+    else if (step === 2 && !traffic) step = 1;
+    return { step, country, traffic, car };
+  } catch {
+    return null;
+  }
 }
 
 function choiceClass(selected: boolean) {
@@ -167,12 +193,35 @@ export default function TrafikktellerPage() {
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedTraffic, setSelectedTraffic] = useState<string | null>(null);
   const [selectedCar, setSelectedCar] = useState<string | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
 
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
   const readyToSend = Boolean(selectedCountry && selectedTraffic && selectedCar);
+
+  useEffect(() => {
+    const draft = readDraft();
+    if (draft) {
+      setStep(draft.step);
+      setSelectedCountry(draft.country);
+      setSelectedTraffic(draft.traffic);
+      setSelectedCar(draft.car);
+    }
+    setDraftReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const draft: Draft = {
+      step,
+      country: selectedCountry,
+      traffic: selectedTraffic,
+      car: selectedCar,
+    };
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  }, [draftReady, step, selectedCountry, selectedTraffic, selectedCar]);
 
   function countryName(code: string | null) {
     if (!code) return null;
@@ -190,30 +239,26 @@ export default function TrafikktellerPage() {
   }
 
   function velgLand(code: string) {
+    setSent(false);
     setSelectedCountry(code);
-    setTimeout(() => {
-      setStep(1);
-    }, 180);
+    setStep(1);
   }
 
   function velgLandDropdown(event: React.ChangeEvent<HTMLSelectElement>) {
     const code = event.target.value;
+    setSent(false);
     setSelectedCountry(code || null);
-    if (code) {
-      setTimeout(() => {
-        setStep(1);
-      }, 180);
-    }
+    if (code) setStep(1);
   }
 
   function velgTrafikk(key: string) {
+    setSent(false);
     setSelectedTraffic(key);
-    setTimeout(() => {
-      setStep(2);
-    }, 180);
+    setStep(2);
   }
 
   function velgBil(key: string) {
+    setSent(false);
     setSelectedCar(key);
   }
 
@@ -242,11 +287,8 @@ export default function TrafikktellerPage() {
         }),
       });
       setSent(true);
-      await sleep(1300);
-      setSelectedCountry(null);
-      setSelectedTraffic(null);
       setSelectedCar(null);
-      setStep(0);
+      setStep(2);
     } catch {
       setSendError("Klarte ikke å sende inn data.");
     } finally {
@@ -269,30 +311,8 @@ export default function TrafikktellerPage() {
 
   return (
     <main className={readyToSend ? "pb-28" : undefined}>
-      <div className="flex h-2" aria-hidden="true">
-        <div className="flex-1 bg-vv-orange" />
-        <div className="flex-1 bg-vv-ink" />
-        <div className="flex-1 bg-vv-gray" />
-      </div>
-
-      <div className="flex min-h-10 flex-col sm:flex-row">
-        <h1 className="bg-vv-ink px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.1em] text-white sm:shrink-0">
-          Trafikktelling
-        </h1>
-        <p className="flex-1 bg-vv-orange px-4 py-2.5 text-xs tracking-[0.1em] text-vv-ink">
-          registrer kjøretøy
-        </p>
-      </div>
-
-      <div className="flex items-center justify-between gap-4 border-b border-vv-gray px-4 py-3 sm:px-6">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-sm text-vv-blue underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Tilbake til forsiden
-        </Link>
-        <div className="text-right text-xs text-vv-ink">
+      <div className="flex justify-end border-b border-vv-gray px-4 py-2 text-xs text-vv-ink sm:px-6">
+        <div className="text-right">
           <div className="tabular-nums">Nå: {liveTime}</div>
           <div>{gpsLabel}</div>
         </div>
@@ -397,10 +417,6 @@ export default function TrafikktellerPage() {
                     aria-pressed={selectedTraffic === t.key}
                     className={choiceClass(selectedTraffic === t.key) + " min-h-32 text-lg sm:text-xl"}
                     onClick={() => velgTrafikk(t.key)}
-                    disabled={
-                      !selectedCountry ||
-                      (!!selectedTraffic && selectedTraffic !== t.key)
-                    }
                   >
                     <t.icon
                       className={`mb-2 h-8 w-8 ${selectedTraffic === t.key ? "text-white" : "text-vv-ink"}`}
@@ -428,9 +444,6 @@ export default function TrafikktellerPage() {
                     aria-pressed={selectedCar === c.key}
                     className={choiceClass(selectedCar === c.key) + " min-h-28 text-sm sm:text-base"}
                     onClick={() => velgBil(c.key)}
-                    disabled={
-                      !selectedTraffic || (!!selectedCar && selectedCar !== c.key)
-                    }
                   >
                     <c.icon
                       className={`mb-2 h-7 w-7 ${selectedCar === c.key ? "text-white" : "text-vv-ink"}`}
@@ -463,8 +476,6 @@ export default function TrafikktellerPage() {
           </div>
         )}
       </section>
-
-      <DashboardSection />
 
       {readyToSend && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-vv-gray bg-white px-4 py-3 sm:px-6">
