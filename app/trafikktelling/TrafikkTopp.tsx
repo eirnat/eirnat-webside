@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 
 const LINKS = [
   { href: "/trafikktelling", label: "Telling" },
@@ -19,7 +18,7 @@ export function TrafikkTopp() {
   const onStats = pathname.startsWith("/trafikktelling/statistikk");
 
   return (
-    <header>
+    <header className="bg-vv-ink pt-[env(safe-area-inset-top)]">
       <div className="flex h-2" aria-hidden="true">
         <div className="flex-1 bg-vv-orange" />
         <div className="flex-1 bg-vv-ink" />
@@ -35,16 +34,9 @@ export function TrafikkTopp() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3 border-b border-vv-gray px-4 py-3 sm:px-6">
-        <Link
-          href="/"
-          className="inline-flex shrink-0 items-center gap-1.5 text-sm text-vv-blue underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Forsiden
-        </Link>
+      <div className="border-b border-vv-gray bg-white px-4 py-3 sm:px-6">
         <nav
-          className="grid min-w-0 flex-1 grid-cols-2 border border-vv-gray"
+          className="grid grid-cols-2 border border-vv-gray"
           aria-label="Trafikktelling"
         >
           {LINKS.map((link) => {
