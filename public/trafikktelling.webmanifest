@@ -1,0 +1,32 @@
+{
+  "id": "/trafikktelling",
+  "name": "Trafikktelling",
+  "short_name": "Trafikktelling",
+  "description": "Registrer kjøretøy i trafikktelling.",
+  "start_url": "/trafikktelling",
+  "scope": "/trafikktelling",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#444f55",
+  "lang": "nb",
+  "icons": [
+    {
+      "src": "/trafikktelling/app-ikon/192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/trafikktelling/app-ikon/512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/trafikktelling/app-ikon/512?maskable=1",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

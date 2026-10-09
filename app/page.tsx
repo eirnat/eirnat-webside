@@ -74,26 +74,6 @@ export default function Home() {
               </div>
             </div>
           </Link>
-
-          {/* Spillsystemer */}
-          <Link href="/spillsystemer" className="group">
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm transition-all hover:shadow-md hover:border-blue-300 hover:-translate-y-1">
-              <div className="flex items-center justify-between">
-                <div className="flex gap-4 items-center">
-                  <div className="bg-slate-50 p-3 rounded-xl text-slate-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                    <Dices size={24} />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold">Spillsystemer</h2>
-                    <p className="text-slate-500 text-sm">
-                      Regler, mekanikker og kreative påfunn innen spillverdenen.
-                    </p>
-                  </div>
-                </div>
-                <ArrowRight className="text-slate-200 group-hover:text-blue-600 transition-colors" />
-              </div>
-            </div>
-          </Link>
         </div>
 
         <footer className="mt-24 pt-8 border-t border-slate-200 text-xs text-slate-400">
