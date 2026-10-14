@@ -6,6 +6,7 @@ import {
   Bus,
   Truck,
   Motorbike,
+  Caravan,
   User,
   Briefcase,
   MoreHorizontal,
@@ -132,6 +133,7 @@ const CAR_TYPES = [
   { key: "lastebil", label: "Lastebil", icon: Truck },
   { key: "buss", label: "Buss", icon: Bus },
   { key: "motorsykkel", label: "Motorsykkel", icon: Motorbike },
+  { key: "bobil", label: "Bobil", icon: Caravan },
   { key: "annet", label: "Annet", icon: MoreHorizontal },
 ];
 
@@ -503,7 +505,7 @@ export default function TrafikktellerPage() {
                 Kjøretøy
               </h2>
               <p className="mt-2 text-base">Hvilken type kjøretøy gjelder tellingen?</p>
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 {CAR_TYPES.map((c) => (
                   <button
                     key={c.key}

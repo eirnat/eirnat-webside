@@ -14,6 +14,7 @@ export const THEME = {
   blue: "#077197",
   green: "#158925",
   gray: "#dadada",
+  red: "#b63434",
 };
 
 const FONT_FALLBACK = "Arial, Helvetica, sans-serif";
@@ -35,6 +36,7 @@ const CAR_LABEL_KEYS = [
   "lastebil",
   "buss",
   "motorsykkel",
+  "bobil",
   "annet",
 ];
 
@@ -43,6 +45,7 @@ const CAR_LABELS = {
   lastebil: "Lastebil",
   buss: "Buss",
   motorsykkel: "Motorsykkel",
+  bobil: "Bobil",
   annet: "Annet",
 };
 
@@ -366,6 +369,7 @@ export async function createDashboard(root, options = {}) {
     THEME.blue,
     THEME.green,
     THEME.foreground,
+    THEME.red,
     THEME.gray,
   ];
 
