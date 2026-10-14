@@ -1,13 +1,14 @@
 /**
- * Dashboard: Leaflet-kart + Chart.js.
- * Data hentes fra Apps Script (JSON-array med land, trafikk, type, breddegrad, lengdegrad).
+ * Kart og diagrammer for statistikksiden.
+ * Periodefilter og tall ligger i statsModel.ts. update() tegner på nytt.
  */
 import L from "leaflet";
 import Chart from "chart.js/auto";
 import "leaflet/dist/leaflet.css";
+import { buildView } from "./statsModel";
 
 /** R902-palett, samme verdier som .trafikktelling i globals.css */
-export const THEME = {
+const THEME = {
   background: "#ffffff",
   foreground: "#444f55",
   orange: "#ff9600",
@@ -18,135 +19,22 @@ export const THEME = {
 };
 
 const FONT_FALLBACK = "Arial, Helvetica, sans-serif";
-
-/** Grovt landssenter for markører når telling mangler GPS */
-const COUNTRY_CENTROIDS = {
-  NO: [59.91, 10.75],
-  SE: [59.33, 18.07],
-  DK: [55.68, 12.57],
-  DE: [51.16, 10.45],
-  PL: [51.92, 19.15],
-  LT: [55.17, 23.88],
-  FI: [61.92, 25.75],
-  NL: [52.13, 5.29],
-};
-
-const CAR_LABEL_KEYS = [
-  "personbil",
-  "lastebil",
-  "buss",
-  "motorsykkel",
-  "bobil",
-  "annet",
+const NORWAY_VIEW = { center: [65, 13], zoom: 4 };
+const CAR_PALETTE = [
+  THEME.orange,
+  THEME.blue,
+  THEME.green,
+  THEME.foreground,
+  THEME.red,
+  THEME.gray,
 ];
 
-const CAR_LABELS = {
-  personbil: "Personbil",
-  lastebil: "Lastebil",
-  buss: "Buss",
-  motorsykkel: "Motorsykkel",
-  bobil: "Bobil",
-  annet: "Annet",
-};
-
-function parseCoord(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const n =
-    typeof value === "number"
-      ? value
-      : parseFloat(String(value).replace(",", "."));
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeLandCode(row) {
-  const raw = row.land ?? row.country;
-  if (!raw || typeof raw !== "string") return "";
-  return raw.trim().toUpperCase().slice(0, 2);
-}
-
-function normalizeTraffic(row) {
-  const t = String(row.trafikk ?? "")
-    .trim()
-    .toLowerCase();
-  if (t === "privat") return "privat";
-  if (t === "yrkes" || t === "yrkestrafikk") return "yrkes";
-  return null;
-}
-
-function normalizeCarType(row) {
-  const t = String(row.type ?? "")
-    .trim()
-    .toLowerCase();
-  if (CAR_LABEL_KEYS.includes(t)) return t;
-  return "annet";
-}
-
-/**
- * @param {unknown[]} rawRows
- */
-function aggregateFromRows(rawRows) {
-  const rows = Array.isArray(rawRows) ? rawRows : [];
-  const byLand = new Map();
-  const traffic = { privat: 0, yrkes: 0 };
-  const carTypes = Object.fromEntries(CAR_LABEL_KEYS.map((k) => [k, 0]));
-  const gpsPoints = [];
-
-  for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
-
-    const land = normalizeLandCode(row);
-    if (land) {
-      byLand.set(land, (byLand.get(land) || 0) + 1);
-    }
-
-    const tr = normalizeTraffic(row);
-    if (tr) traffic[tr] += 1;
-
-    const ct = normalizeCarType(row);
-    carTypes[ct] += 1;
-
-    const lat = parseCoord(row.breddegrad ?? row.lat);
-    const lng = parseCoord(
-      row.lengdegrad ?? row.lng ?? row.longitude ?? row.lon
-    );
-    if (lat != null && lng != null) {
-      gpsPoints.push({ lat, lng, land, row });
-    }
-  }
-
-  const regionNames = new Intl.DisplayNames(["nb"], { type: "region" });
-  const carsPerCountry = [...byLand.entries()]
-    .map(([code, count]) => {
-      const centroid = COUNTRY_CENTROIDS[code];
-      const lat = centroid ? centroid[0] : 55;
-      const lng = centroid ? centroid[1] : 12;
-      return {
-        code,
-        name: regionNames.of(code) || code,
-        count,
-        lat,
-        lng,
-      };
-    })
-    .sort((a, b) => b.count - a.count);
-
-  return {
-    rows,
-    carsPerCountry,
-    traffic,
-    carTypes,
-    gpsPoints,
-  };
-}
-
-async function fetchTellingRows(dataUrl) {
-  if (!dataUrl) return [];
-  const res = await fetch(dataUrl, { method: "GET" });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function countMarker() {
@@ -159,10 +47,6 @@ function countMarker() {
   });
 }
 
-function chartTextColor() {
-  return THEME.foreground;
-}
-
 function chartOptions(fontFamily) {
   return {
     responsive: true,
@@ -170,7 +54,7 @@ function chartOptions(fontFamily) {
     plugins: {
       legend: {
         labels: {
-          color: chartTextColor(),
+          color: THEME.foreground,
           font: { family: fontFamily, size: 12 },
         },
       },
@@ -182,100 +66,70 @@ function chartOptions(fontFamily) {
   };
 }
 
+function axisScale(fontFamily) {
+  return {
+    ticks: { color: THEME.foreground, font: { family: fontFamily, size: 11 } },
+    grid: { color: `${THEME.foreground}18` },
+  };
+}
+
+function titlePlugin(fontFamily, text) {
+  return {
+    display: true,
+    text,
+    color: THEME.foreground,
+    font: { family: fontFamily, size: 15, weight: "600" },
+  };
+}
+
 /**
  * @param {HTMLElement} root
- * @param {object} [options]
- * @param {string} [options.dataUrl] – GOOGLE_SCRIPT_URL (GET → JSON)
- * @returns {Promise<() => void>}
+ * @returns {{ update: (rows: unknown[], period: { from: Date | null, to: Date | null, incomplete: boolean, id: string }) => void, destroy: () => void }}
  */
-export async function createDashboard(root, options = {}) {
-  const fontFamily =
-    getComputedStyle(root).fontFamily || FONT_FALLBACK;
+export function createDashboard(root) {
+  const fontFamily = getComputedStyle(root).fontFamily || FONT_FALLBACK;
   const commonChartOptions = chartOptions(fontFamily);
-  const countIcon = countMarker();
-
-  let rows = [];
-  try {
-    if (options.dataUrl) {
-      rows = await fetchTellingRows(options.dataUrl);
-    }
-  } catch (e) {
-    console.warn("Dashboard: klarte ikke å hente data", e);
-  }
-
-  const agg = aggregateFromRows(rows);
-  const { carsPerCountry, traffic, carTypes, gpsPoints } = agg;
-  const hasRows = rows.length > 0;
-
   const mapEl = root.querySelector("[data-dashboard-map]");
+  const timeCanvas = root.querySelector('[data-chart="time"]');
   const barCanvas = root.querySelector('[data-chart="bars"]');
   const trafficCanvas = root.querySelector('[data-chart="traffic"]');
   const carTypesCanvas = root.querySelector('[data-chart="car-types"]');
 
-  if (!mapEl || !barCanvas || !trafficCanvas || !carTypesCanvas) {
+  if (!mapEl || !timeCanvas || !barCanvas || !trafficCanvas || !carTypesCanvas) {
     console.warn("createDashboard: mangler DOM-elementer");
-    return () => {};
+    return { update() {}, destroy() {} };
   }
 
   const map = L.map(mapEl, {
     scrollWheelZoom: true,
     attributionControl: true,
-  }).setView([62.5, 12], 4.5);
+  }).setView(NORWAY_VIEW.center, NORWAY_VIEW.zoom);
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19,
-  }).addTo(map);
+  L.tileLayer(
+    "https://cache.kartverket.no/v1/wmts/1.0.0/topograatone/default/webmercator/{z}/{y}/{x}.png",
+    {
+      attribution: '© <a href="https://www.kartverket.no/">Kartverket</a>',
+      maxZoom: 18,
+    },
+  ).addTo(map);
 
-  const bounds = [];
-
-  const regionForMap = new Intl.DisplayNames(["nb"], { type: "region" });
-
-  if (gpsPoints.length > 0) {
-    for (const p of gpsPoints) {
-      const marker = L.marker([p.lat, p.lng], { icon: countIcon }).addTo(map);
-      const typeLabel = CAR_LABELS[normalizeCarType(p.row)] ?? p.row.type;
-      const landName = regionForMap.of(p.land) || p.land || "?";
-      marker.bindPopup(
-        `<strong style="color:${THEME.foreground};font-family:var(--font-etica),Arial,sans-serif">${landName}</strong><br/>` +
-          `<span style="color:${THEME.foreground};opacity:.85">${typeLabel}</span>`
-      );
-      bounds.push([p.lat, p.lng]);
-    }
-  } else {
-    for (const row of carsPerCountry) {
-      const marker = L.marker([row.lat, row.lng], { icon: countIcon }).addTo(map);
-      marker.bindPopup(
-        `<strong style="color:${THEME.foreground};font-family:var(--font-etica),Arial,sans-serif">${row.name}</strong><br/>` +
-          `<span style="color:${THEME.foreground};opacity:.85">${row.count} ${row.count === 1 ? "telling" : "tellinger"}</span>`
-      );
-      bounds.push([row.lat, row.lng]);
-    }
-  }
-
-  if (bounds.length) {
-    map.fitBounds(bounds, { padding: [36, 36], maxZoom: gpsPoints.length ? 12 : 6 });
-  }
+  const markers = L.layerGroup().addTo(map);
+  const countIcon = countMarker();
 
   Chart.defaults.color = THEME.foreground;
   Chart.defaults.font.family = fontFamily;
 
-  const barLabels = hasRows
-    ? carsPerCountry.map((c) => c.name)
-    : ["(ingen data)"];
-  const barData = hasRows ? carsPerCountry.map((c) => c.count) : [0];
+  const live = { trafficTotal: 0, carTotal: 0 };
 
-  const barChart = new Chart(barCanvas.getContext("2d"), {
+  const timeChart = new Chart(timeCanvas.getContext("2d"), {
     type: "bar",
     data: {
-      labels: barLabels,
+      labels: [],
       datasets: [
         {
           label: "Antall tellinger",
-          data: barData,
-          backgroundColor: THEME.blue,
-          borderColor: THEME.blue,
+          data: [],
+          backgroundColor: THEME.orange,
           borderWidth: 0,
           borderRadius: 0,
         },
@@ -284,52 +138,61 @@ export async function createDashboard(root, options = {}) {
     options: {
       ...commonChartOptions,
       scales: {
-        x: {
-          ticks: { color: THEME.foreground, font: { family: fontFamily, size: 11 } },
-          grid: { color: `${THEME.foreground}18` },
-        },
+        x: axisScale(fontFamily),
         y: {
+          ...axisScale(fontFamily),
           beginAtZero: true,
-          ticks: {
-            color: THEME.foreground,
-            font: { family: fontFamily, size: 11 },
-            precision: 0,
-          },
-          grid: { color: `${THEME.foreground}18` },
+          ticks: { ...axisScale(fontFamily).ticks, precision: 0 },
         },
       },
       plugins: {
         ...commonChartOptions.plugins,
         legend: { display: false },
-        title: {
-          display: true,
-          text: hasRows ? "Tellinger per land" : "Tellinger per land (ingen data)",
-          color: THEME.foreground,
-          font: { family: fontFamily, size: 15, weight: "600" },
-        },
+        title: titlePlugin(fontFamily, "Tellinger over tid"),
       },
     },
   });
 
-  const tPriv = traffic.privat;
-  const tYrk = traffic.yrkes;
-  const trafficTotal = tPriv + tYrk;
-  const trafficLabels =
-    trafficTotal > 0 ? ["Privat", "Yrkestrafikk"] : ["Ingen data"];
-  const trafficData = trafficTotal > 0 ? [tPriv, tYrk] : [1];
-  const trafficColors =
-    trafficTotal > 0
-      ? [THEME.blue, THEME.green]
-      : [`${THEME.foreground}33`];
+  const barChart = new Chart(barCanvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: "Antall tellinger",
+          data: [],
+          backgroundColor: THEME.blue,
+          borderWidth: 0,
+          borderRadius: 0,
+        },
+      ],
+    },
+    options: {
+      ...commonChartOptions,
+      scales: {
+        x: axisScale(fontFamily),
+        y: {
+          ...axisScale(fontFamily),
+          beginAtZero: true,
+          ticks: { ...axisScale(fontFamily).ticks, precision: 0 },
+        },
+      },
+      plugins: {
+        ...commonChartOptions.plugins,
+        legend: { display: false },
+        title: titlePlugin(fontFamily, "Tellinger per land"),
+      },
+    },
+  });
 
   const trafficChart = new Chart(trafficCanvas.getContext("2d"), {
     type: "pie",
     data: {
-      labels: trafficLabels,
+      labels: ["Ingen data"],
       datasets: [
         {
-          data: trafficData,
-          backgroundColor: trafficColors,
+          data: [1],
+          backgroundColor: [`${THEME.foreground}33`],
           borderColor: THEME.background,
           borderWidth: 2,
         },
@@ -339,54 +202,30 @@ export async function createDashboard(root, options = {}) {
       ...commonChartOptions,
       plugins: {
         ...commonChartOptions.plugins,
-        title: {
-          display: true,
-          text: "Privat vs yrkestrafikk",
-          color: THEME.foreground,
-          font: { family: fontFamily, size: 15, weight: "600" },
-        },
+        title: titlePlugin(fontFamily, "Privat vs yrkestrafikk"),
         tooltip: {
           ...commonChartOptions.plugins.tooltip,
           callbacks: {
             label(ctx) {
-              if (trafficTotal === 0) return "Ingen tellinger";
-              const v = ctx.raw;
-              const pct =
-                trafficTotal > 0
-                  ? Math.round((v / trafficTotal) * 100)
-                  : 0;
-              return `${ctx.label}: ${v} (${pct}%)`;
+              if (live.trafficTotal === 0) return "Ingen tellinger";
+              const value = Number(ctx.raw);
+              const pct = Math.round((value / live.trafficTotal) * 100);
+              return `${ctx.label}: ${value} (${pct}%)`;
             },
           },
         },
       },
     },
   });
-
-  const carKeys = CAR_LABEL_KEYS;
-  const carPalette = [
-    THEME.orange,
-    THEME.blue,
-    THEME.green,
-    THEME.foreground,
-    THEME.red,
-    THEME.gray,
-  ];
-
-  const carTotal = carKeys.reduce((s, k) => s + (carTypes[k] ?? 0), 0);
-  const carLabelsResolved = carTotal > 0 ? carKeys.map((k) => CAR_LABELS[k]) : ["Ingen data"];
-  const carDataResolved = carTotal > 0 ? carKeys.map((k) => carTypes[k] ?? 0) : [1];
-  const carColorsResolved =
-    carTotal > 0 ? carPalette : [`${THEME.foreground}33`];
 
   const carTypeChart = new Chart(carTypesCanvas.getContext("2d"), {
     type: "pie",
     data: {
-      labels: carLabelsResolved,
+      labels: ["Ingen data"],
       datasets: [
         {
-          data: carDataResolved,
-          backgroundColor: carColorsResolved,
+          data: [1],
+          backgroundColor: [`${THEME.foreground}33`],
           borderColor: THEME.background,
           borderWidth: 2,
         },
@@ -396,20 +235,15 @@ export async function createDashboard(root, options = {}) {
       ...commonChartOptions,
       plugins: {
         ...commonChartOptions.plugins,
-        title: {
-          display: true,
-          text: "Biltyper",
-          color: THEME.foreground,
-          font: { family: fontFamily, size: 15, weight: "600" },
-        },
+        title: titlePlugin(fontFamily, "Biltyper"),
         tooltip: {
           ...commonChartOptions.plugins.tooltip,
           callbacks: {
             label(ctx) {
-              if (carTotal === 0) return "Ingen tellinger";
-              const v = ctx.raw;
-              const pct = carTotal > 0 ? Math.round((v / carTotal) * 100) : 0;
-              return `${ctx.label}: ${v} (${pct}%)`;
+              if (live.carTotal === 0) return "Ingen tellinger";
+              const value = Number(ctx.raw);
+              const pct = Math.round((value / live.carTotal) * 100);
+              return `${ctx.label}: ${value} (${pct}%)`;
             },
           },
         },
@@ -417,10 +251,93 @@ export async function createDashboard(root, options = {}) {
     },
   });
 
-  return function destroyDashboard() {
+  let destroyed = false;
+
+  function renderMarkers(points) {
+    markers.clearLayers();
+    if (points.length === 0) {
+      map.setView(NORWAY_VIEW.center, NORWAY_VIEW.zoom);
+      return;
+    }
+
+    const bounds = [];
+    for (const point of points) {
+      const marker = L.marker([point.lat, point.lng], { icon: countIcon });
+      marker.bindPopup(
+        `<strong>${escapeHtml(point.landName)}</strong><br/>${escapeHtml(point.typeLabel)}<br/>${escapeHtml(point.whenLabel)}`,
+      );
+      markers.addLayer(marker);
+      bounds.push([point.lat, point.lng]);
+    }
+
+    if (bounds.length === 1) {
+      map.setView(bounds[0], 13);
+      return;
+    }
+    map.fitBounds(bounds, { padding: [36, 36], maxZoom: 12 });
+  }
+
+  function update(rows, period) {
+    if (destroyed) return;
+    const view = buildView(rows, period);
+    live.trafficTotal = view.privat + view.yrkes;
+    live.carTotal = view.carTypes.reduce((sum, item) => sum + item.count, 0);
+
+    timeChart.data.labels =
+      view.buckets.length > 0 ? view.buckets.map((bucket) => bucket.label) : ["Ingen data"];
+    timeChart.data.datasets[0].data =
+      view.buckets.length > 0 ? view.buckets.map((bucket) => bucket.count) : [0];
+    timeChart.options.plugins.title.text = view.bucketTitle;
+    timeChart.update();
+
+    const hasCountries = view.countries.length > 0;
+    barChart.data.labels = hasCountries
+      ? view.countries.map((country) => country.name)
+      : ["Ingen data"];
+    barChart.data.datasets[0].data = hasCountries
+      ? view.countries.map((country) => country.count)
+      : [0];
+    barChart.update();
+
+    if (live.trafficTotal > 0) {
+      trafficChart.data.labels = ["Privat", "Yrkestrafikk"];
+      trafficChart.data.datasets[0].data = [view.privat, view.yrkes];
+      trafficChart.data.datasets[0].backgroundColor = [THEME.blue, THEME.green];
+    } else {
+      trafficChart.data.labels = ["Ingen data"];
+      trafficChart.data.datasets[0].data = [1];
+      trafficChart.data.datasets[0].backgroundColor = [`${THEME.foreground}33`];
+    }
+    trafficChart.update();
+
+    if (live.carTotal > 0) {
+      carTypeChart.data.labels = view.carTypes.map((item) => item.label);
+      carTypeChart.data.datasets[0].data = view.carTypes.map((item) => item.count);
+      carTypeChart.data.datasets[0].backgroundColor = CAR_PALETTE;
+    } else {
+      carTypeChart.data.labels = ["Ingen data"];
+      carTypeChart.data.datasets[0].data = [1];
+      carTypeChart.data.datasets[0].backgroundColor = [`${THEME.foreground}33`];
+    }
+    carTypeChart.update();
+
+    renderMarkers(view.points);
+    map.invalidateSize();
+  }
+
+  function destroy() {
+    if (destroyed) return;
+    destroyed = true;
+    timeChart.destroy();
     barChart.destroy();
     trafficChart.destroy();
     carTypeChart.destroy();
     map.remove();
-  };
+  }
+
+  requestAnimationFrame(() => {
+    if (!destroyed) map.invalidateSize();
+  });
+
+  return { update, destroy };
 }
