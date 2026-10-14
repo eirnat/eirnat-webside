@@ -39,7 +39,7 @@ function escapeHtml(value) {
 
 function countMarker() {
   return L.divIcon({
-    className: "vv-count-marker",
+    className: "leaflet-div-icon vv-count-marker",
     html: "",
     iconSize: [16, 16],
     iconAnchor: [8, 8],
