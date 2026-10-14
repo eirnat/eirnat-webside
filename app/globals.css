@@ -46,9 +46,47 @@ body {
   font-family: var(--font-etica), Arial, Helvetica, sans-serif;
 }
 
-.vv-count-marker {
+.vv-map-frame {
+  border: 1px solid #dadada;
+  background: #ffffff;
+}
+
+.vv-map-frame__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: #444f55;
+  color: #ffffff;
+  padding: 0.625rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.leaflet-div-icon.vv-count-marker {
   background-color: #ff9600;
   border: 2px solid #444f55;
   border-radius: 50%;
   box-sizing: border-box;
+}
+
+.trafikktelling .leaflet-container {
+  background: #f5f5f5;
+  font-family: var(--font-etica), Arial, Helvetica, sans-serif;
+}
+
+.trafikktelling .leaflet-popup-content-wrapper {
+  border-radius: 0;
+  border-top: 4px solid #ff9600;
+  box-shadow: none;
+}
+
+.trafikktelling .leaflet-popup-content {
+  margin: 10px 14px;
+  color: #444f55;
+  font-family: var(--font-etica), Arial, Helvetica, sans-serif;
+}
+
+.trafikktelling .leaflet-popup-tip {
+  box-shadow: none;
 }
