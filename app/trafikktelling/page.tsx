@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Car,
   Bus,
   Truck,
   Motorbike,
-  BadgeCheck,
   User,
   Briefcase,
   MoreHorizontal,
@@ -151,6 +150,36 @@ type Draft = {
   car: string | null;
 };
 
+type CountPayload = {
+  land: string;
+  trafikk: string;
+  type: string;
+  lat: number | null;
+  lng: number | null;
+};
+
+type FailedSend = {
+  id: number;
+  payload: CountPayload;
+};
+
+function postCount(payload: CountPayload) {
+  return fetch(GOOGLE_SCRIPT_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: {
+      "Content-Type": "text/plain",
+    },
+    body: JSON.stringify({
+      land: payload.land,
+      trafikk: payload.trafikk,
+      type: payload.type,
+      lat: payload.lat,
+      lng: payload.lng,
+    }),
+  });
+}
+
 function readDraft(): Draft | null {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
@@ -195,9 +224,13 @@ export default function TrafikktellerPage() {
   const [selectedCar, setSelectedCar] = useState<string | null>(null);
   const [draftReady, setDraftReady] = useState(false);
 
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [failedSend, setFailedSend] = useState<FailedSend | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const attemptRef = useRef(0);
+  const failedIdRef = useRef<number | null>(null);
+  const submitLock = useRef(false);
 
   const readyToSend = Boolean(selectedCountry && selectedTraffic && selectedCar);
 
@@ -223,6 +256,12 @@ export default function TrafikktellerPage() {
     sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
   }, [draftReady, step, selectedCountry, selectedTraffic, selectedCar]);
 
+  useEffect(() => {
+    if (step === 0 && !selectedCountry && !selectedTraffic && !selectedCar) {
+      submitLock.current = false;
+    }
+  }, [step, selectedCountry, selectedTraffic, selectedCar]);
+
   function countryName(code: string | null) {
     if (!code) return null;
     return (
@@ -239,60 +278,82 @@ export default function TrafikktellerPage() {
   }
 
   function velgLand(code: string) {
-    setSent(false);
     setSelectedCountry(code);
     setStep(1);
   }
 
   function velgLandDropdown(event: React.ChangeEvent<HTMLSelectElement>) {
     const code = event.target.value;
-    setSent(false);
     setSelectedCountry(code || null);
     if (code) setStep(1);
   }
 
   function velgTrafikk(key: string) {
-    setSent(false);
     setSelectedTraffic(key);
     setStep(2);
   }
 
   function velgBil(key: string) {
-    setSent(false);
     setSelectedCar(key);
   }
 
-  async function sendData() {
-    setSending(true);
-    setSendError(null);
-    setSent(false);
-
-    const land = selectedCountry;
-    const trafikk = selectedTraffic;
-    const type = selectedCar;
-
+  function resetForm() {
+    const empty: Draft = { step: 0, country: null, traffic: null, car: null };
+    setStep(0);
+    setSelectedCountry(null);
+    setSelectedTraffic(null);
+    setSelectedCar(null);
     try {
-      await fetch(GOOGLE_SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: {
-          "Content-Type": "text/plain",
-        },
-        body: JSON.stringify({
-          land,
-          trafikk,
-          type,
-          lat: gps.lat,
-          lng: gps.lng,
-        }),
-      });
-      setSent(true);
-      setSelectedCar(null);
-      setStep(2);
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(empty));
+    } catch {
+      // Utkastet er bare en hjelp ved omlasting.
+    }
+  }
+
+  function sendData() {
+    if (submitLock.current) return;
+    if (!selectedCountry || !selectedTraffic || !selectedCar) return;
+
+    submitLock.current = true;
+    const payload: CountPayload = {
+      land: selectedCountry,
+      trafikk: selectedTraffic,
+      type: selectedCar,
+      lat: gps.lat,
+      lng: gps.lng,
+    };
+    const attempt = ++attemptRef.current;
+
+    resetForm();
+    setStatusMessage(null);
+    queueMicrotask(() => {
+      setStatusMessage("Tellingen er registrert");
+    });
+
+    void postCount(payload).catch(() => {
+      failedIdRef.current = attempt;
+      setFailedSend({ id: attempt, payload });
+      setSendError("Klarte ikke å sende inn data.");
+      if (attemptRef.current === attempt) setStatusMessage(null);
+    });
+  }
+
+  async function retrySend() {
+    if (!failedSend || retrying) return;
+    const current = failedSend;
+    setRetrying(true);
+    try {
+      await postCount(current.payload);
+      if (failedIdRef.current === current.id) {
+        failedIdRef.current = null;
+        setFailedSend(null);
+        setSendError(null);
+        setStatusMessage("Tellingen er registrert");
+      }
     } catch {
       setSendError("Klarte ikke å sende inn data.");
     } finally {
-      setSending(false);
+      setRetrying(false);
     }
   }
 
@@ -315,6 +376,9 @@ export default function TrafikktellerPage() {
         readyToSend ? "pb-[calc(7rem+env(safe-area-inset-bottom))]" : undefined
       }
     >
+      <div className="sr-only" role="status" aria-live="polite">
+        {statusMessage}
+      </div>
       <div className="flex justify-end border-b border-vv-gray px-4 py-2 text-xs text-vv-ink sm:px-6">
         <div className="text-right">
           <div className="tabular-nums">Nå: {liveTime}</div>
@@ -466,17 +530,17 @@ export default function TrafikktellerPage() {
             className="mt-6 border border-vv-red bg-vv-red-bg px-4 py-3 text-sm text-vv-red"
             role="alert"
           >
-            {sendError}
-          </div>
-        )}
-
-        {sent && (
-          <div className="mt-6 flex items-start gap-3 border border-vv-green bg-vv-green-bg px-4 py-4">
-            <BadgeCheck className="mt-0.5 h-6 w-6 shrink-0 text-vv-green" aria-hidden="true" />
-            <div>
-              <p className="font-semibold">Tellingen er registrert</p>
-              <p className="mt-1 text-sm">Takk for bidraget.</p>
-            </div>
+            <p>{sendError}</p>
+            {failedSend && (
+              <button
+                type="button"
+                onClick={retrySend}
+                disabled={retrying}
+                className="mt-3 border border-current px-3 py-2 font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {retrying ? "Sender" : "Prøv igjen"}
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -487,11 +551,10 @@ export default function TrafikktellerPage() {
             <p className="min-w-0 flex-1 text-sm text-vv-ink">{summary.join(" · ")}</p>
             <button
               type="button"
-              disabled={sending}
-              className="bg-vv-ink px-6 py-4 text-base font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue disabled:cursor-not-allowed disabled:opacity-60 sm:shrink-0"
+              className="bg-vv-ink px-6 py-4 text-base font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vv-blue sm:shrink-0"
               onClick={sendData}
             >
-              {sending ? "Sender" : "Bekreft og send"}
+              Bekreft og send
             </button>
           </div>
         </div>
