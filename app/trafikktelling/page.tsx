@@ -9,9 +9,11 @@ import {
   Caravan,
   User,
   Briefcase,
+  CircleHelp,
   MoreHorizontal,
 } from "lucide-react";
 import { GOOGLE_SCRIPT_URL } from "./google-script";
+import { Tilbakemelding } from "./Tilbakemelding";
 
 function formatClock(date: Date) {
   return date.toLocaleTimeString("nb-NO", {
@@ -126,6 +128,7 @@ function useCountryOptions() {
 const TRAFFIC_TYPES = [
   { key: "privat", label: "Privat", icon: User },
   { key: "yrkes", label: "Yrkestrafikk", icon: Briefcase },
+  { key: "ukjent", label: "Ukjent", icon: CircleHelp },
 ];
 
 const CAR_TYPES = [
@@ -139,11 +142,11 @@ const CAR_TYPES = [
 
 const STEPS = [
   { id: 0, label: "Land" },
-  { id: 1, label: "Trafikk" },
-  { id: 2, label: "Kjøretøy" },
+  { id: 1, label: "Kjøretøy" },
+  { id: 2, label: "Trafikk" },
 ] as const;
 
-const DRAFT_KEY = "trafikktelling-draft";
+const DRAFT_KEY = "trafikktelling-draft-v2";
 
 type Draft = {
   step: number;
@@ -192,14 +195,16 @@ function readDraft(): Draft | null {
         ? data.country
         : null;
     const traffic =
-      data.traffic === "privat" || data.traffic === "yrkes" ? data.traffic : null;
+      data.traffic === "privat" || data.traffic === "yrkes" || data.traffic === "ukjent"
+        ? data.traffic
+        : null;
     const car =
       typeof data.car === "string" && CAR_TYPES.some((c) => c.key === data.car)
         ? data.car
         : null;
     let step = data.step === 1 || data.step === 2 ? data.step : 0;
     if (!country) step = 0;
-    else if (step === 2 && !traffic) step = 1;
+    else if (step === 2 && !car) step = 1;
     return { step, country, traffic, car };
   } catch {
     return null;
@@ -276,7 +281,7 @@ export default function TrafikktellerPage() {
   function canOpenStep(index: number) {
     if (index === 0) return true;
     if (index === 1) return Boolean(selectedCountry);
-    return Boolean(selectedCountry && selectedTraffic);
+    return Boolean(selectedCountry && selectedCar);
   }
 
   function velgLand(code: string) {
@@ -292,11 +297,11 @@ export default function TrafikktellerPage() {
 
   function velgTrafikk(key: string) {
     setSelectedTraffic(key);
-    setStep(2);
   }
 
   function velgBil(key: string) {
     setSelectedCar(key);
+    setStep(2);
   }
 
   function resetForm() {
@@ -368,8 +373,8 @@ export default function TrafikktellerPage() {
 
   const summary = [
     countryName(selectedCountry),
-    TRAFFIC_TYPES.find((t) => t.key === selectedTraffic)?.label,
     CAR_TYPES.find((c) => c.key === selectedCar)?.label,
+    TRAFFIC_TYPES.find((t) => t.key === selectedTraffic)?.label,
   ].filter(Boolean);
 
   return (
@@ -475,33 +480,6 @@ export default function TrafikktellerPage() {
           {step === 1 && (
             <div>
               <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                Trafikktype
-              </h2>
-              <p className="mt-2 text-base">Hvilken type trafikk dreier det seg om?</p>
-              <div className="mt-6 grid grid-cols-2 gap-3">
-                {TRAFFIC_TYPES.map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    aria-label={t.label}
-                    aria-pressed={selectedTraffic === t.key}
-                    className={choiceClass(selectedTraffic === t.key) + " min-h-32 text-lg sm:text-xl"}
-                    onClick={() => velgTrafikk(t.key)}
-                  >
-                    <t.icon
-                      className={`mb-2 h-8 w-8 ${selectedTraffic === t.key ? "text-white" : "text-vv-ink"}`}
-                      aria-hidden="true"
-                    />
-                    <span>{t.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div>
-              <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
                 Kjøretøy
               </h2>
               <p className="mt-2 text-base">Hvilken type kjøretøy gjelder tellingen?</p>
@@ -520,6 +498,33 @@ export default function TrafikktellerPage() {
                       aria-hidden="true"
                     />
                     <span>{c.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                Trafikktype
+              </h2>
+              <p className="mt-2 text-base">Hvilken type trafikk dreier det seg om?</p>
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {TRAFFIC_TYPES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    aria-label={t.label}
+                    aria-pressed={selectedTraffic === t.key}
+                    className={choiceClass(selectedTraffic === t.key) + " min-h-32 text-lg sm:text-xl"}
+                    onClick={() => velgTrafikk(t.key)}
+                  >
+                    <t.icon
+                      className={`mb-2 h-8 w-8 ${selectedTraffic === t.key ? "text-white" : "text-vv-ink"}`}
+                      aria-hidden="true"
+                    />
+                    <span>{t.label}</span>
                   </button>
                 ))}
               </div>
@@ -546,6 +551,8 @@ export default function TrafikktellerPage() {
           </div>
         )}
       </section>
+
+      <Tilbakemelding />
 
       {readyToSend && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-vv-gray bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">

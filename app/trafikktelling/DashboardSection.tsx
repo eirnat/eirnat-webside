@@ -284,7 +284,7 @@ export function DashboardSection() {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Totalt" value={String(view.total)} hint={periodLabel} />
               <StatCard
                 label="Privat"
@@ -295,6 +295,11 @@ export function DashboardSection() {
                 label="Yrkestrafikk"
                 value={String(view.yrkes)}
                 hint={shareLabel(view.yrkes, view.total)}
+              />
+              <StatCard
+                label="Ukjent"
+                value={String(view.ukjent)}
+                hint={shareLabel(view.ukjent, view.total)}
               />
               <StatCard
                 label="Vanligste kjøretøy"
@@ -338,10 +343,10 @@ export function DashboardSection() {
                 <ChartCard label="Tellinger per land">
                   <canvas data-chart="bars" aria-label="Stolpediagram biler per land" />
                 </ChartCard>
-                <ChartCard label="Privat vs yrkestrafikk">
+                <ChartCard label="Trafikktype">
                   <canvas
                     data-chart="traffic"
-                    aria-label="Kakediagram privat og yrkestrafikk"
+                    aria-label="Kakediagram trafikktype"
                   />
                 </ChartCard>
                 <ChartCard label="Biltyper">
