@@ -39,7 +39,7 @@ export type CountRow = {
   tidspunkt: Date;
   land: string;
   landName: string;
-  trafikk: "privat" | "yrkes" | null;
+  trafikk: "privat" | "yrkes" | "ukjent" | null;
   trafikkLabel: string;
   type: CarType;
   typeLabel: string;
@@ -66,6 +66,7 @@ export type ViewModel = {
   total: number;
   privat: number;
   yrkes: number;
+  ukjent: number;
   topVehicleLabel: string | null;
   topVehicleCount: number;
   countries: { name: string; count: number; share: number }[];
@@ -199,18 +200,20 @@ function countryName(code: string) {
   }
 }
 
-function normalizeTraffic(value: unknown): "privat" | "yrkes" | null {
+function normalizeTraffic(value: unknown): "privat" | "yrkes" | "ukjent" | null {
   const t = String(value ?? "")
     .trim()
     .toLowerCase();
   if (t === "privat") return "privat";
   if (t === "yrkes" || t === "yrkestrafikk") return "yrkes";
+  if (t === "ukjent") return "ukjent";
   return null;
 }
 
-function trafficLabel(value: "privat" | "yrkes" | null) {
+function trafficLabel(value: "privat" | "yrkes" | "ukjent" | null) {
   if (value === "privat") return "Privat";
   if (value === "yrkes") return "Yrkestrafikk";
+  if (value === "ukjent") return "Ukjent";
   return "";
 }
 
@@ -462,6 +465,7 @@ export function buildView(rows: CountRow[], period: ResolvedPeriod): ViewModel {
   >;
   let privat = 0;
   let yrkes = 0;
+  let ukjent = 0;
   const points: MapPoint[] = [];
 
   for (const row of rows) {
@@ -472,6 +476,7 @@ export function buildView(rows: CountRow[], period: ResolvedPeriod): ViewModel {
 
     if (row.trafikk === "privat") privat += 1;
     if (row.trafikk === "yrkes") yrkes += 1;
+    if (row.trafikk === "ukjent") ukjent += 1;
     carCounts[row.type] += 1;
 
     if (row.lat != null && row.lng != null) {
@@ -509,6 +514,7 @@ export function buildView(rows: CountRow[], period: ResolvedPeriod): ViewModel {
     total,
     privat,
     yrkes,
+    ukjent,
     topVehicleLabel: topVehicleCount > 0 ? topVehicleLabel : null,
     topVehicleCount,
     countries,

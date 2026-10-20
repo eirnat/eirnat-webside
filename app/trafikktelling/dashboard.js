@@ -202,7 +202,7 @@ export function createDashboard(root) {
       ...commonChartOptions,
       plugins: {
         ...commonChartOptions.plugins,
-        title: titlePlugin(fontFamily, "Privat vs yrkestrafikk"),
+        title: titlePlugin(fontFamily, "Trafikktype"),
         tooltip: {
           ...commonChartOptions.plugins.tooltip,
           callbacks: {
@@ -280,7 +280,7 @@ export function createDashboard(root) {
   function update(rows, period) {
     if (destroyed) return;
     const view = buildView(rows, period);
-    live.trafficTotal = view.privat + view.yrkes;
+    live.trafficTotal = view.privat + view.yrkes + view.ukjent;
     live.carTotal = view.carTypes.reduce((sum, item) => sum + item.count, 0);
 
     timeChart.data.labels =
@@ -300,9 +300,9 @@ export function createDashboard(root) {
     barChart.update();
 
     if (live.trafficTotal > 0) {
-      trafficChart.data.labels = ["Privat", "Yrkestrafikk"];
-      trafficChart.data.datasets[0].data = [view.privat, view.yrkes];
-      trafficChart.data.datasets[0].backgroundColor = [THEME.blue, THEME.green];
+      trafficChart.data.labels = ["Privat", "Yrkestrafikk", "Ukjent"];
+      trafficChart.data.datasets[0].data = [view.privat, view.yrkes, view.ukjent];
+      trafficChart.data.datasets[0].backgroundColor = [THEME.blue, THEME.green, THEME.gray];
     } else {
       trafficChart.data.labels = ["Ingen data"];
       trafficChart.data.datasets[0].data = [1];
