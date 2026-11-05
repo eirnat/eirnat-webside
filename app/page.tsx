@@ -38,7 +38,7 @@ export default function Home() {
           </Link>
 
           {/* Trafikktelling */}
-          <Link href="/trafikktelling" className="group">
+          <a href="https://trafikktelling.no" className="group">
             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm transition-all hover:shadow-md hover:border-blue-300 hover:-translate-y-1">
               <div className="flex items-center justify-between">
                 <div className="flex gap-4 items-center">
@@ -53,7 +53,7 @@ export default function Home() {
                 <ArrowRight className="text-slate-200 group-hover:text-blue-600 transition-colors" />
               </div>
             </div>
-          </Link>
+          </a>
 
           {/* QR-koder */}
           <Link href="/qr" className="group">

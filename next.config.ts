@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
         destination: "/helge",
         permanent: true,
       },
+      {
+        source: "/trafikktelling/:path*",
+        destination: "https://trafikktelling.no/:path*",
+        permanent: true,
+      },
     ];
   },
 };

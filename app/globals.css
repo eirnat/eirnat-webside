@@ -1,13 +1,5 @@
 @import "tailwindcss";
 
-@font-face {
-  font-family: "LFT Etica";
-  src: url("/fonts/LFTEtica-Semibold.otf") format("opentype");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
   --background: #f6f1e9;
   --foreground: #2b2d42;
@@ -21,72 +13,10 @@
   --color-meadow: var(--accent-primary);
   --color-terra: var(--accent-secondary);
   --font-sans: var(--font-lexend);
-  --color-vv-orange: #ff9600;
-  --color-vv-ink: #444f55;
-  --color-vv-white: #ffffff;
-  --color-vv-gray: #dadada;
-  --color-vv-mist: #f5f5f5;
-  --color-vv-blue: #077197;
-  --color-vv-green: #158925;
-  --color-vv-blue-bg: #e6f1f5;
-  --color-vv-green-bg: #e8f3e9;
-  --color-vv-red: #b63434;
-  --color-vv-red-bg: #fedfe1;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-lexend), Arial, Helvetica, sans-serif;
-}
-
-.trafikktelling {
-  background-color: #ffffff;
-  color: #444f55;
-  font-family: var(--font-etica), Arial, Helvetica, sans-serif;
-}
-
-.vv-map-frame {
-  border: 1px solid #dadada;
-  background: #ffffff;
-}
-
-.vv-map-frame__title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  background: #444f55;
-  color: #ffffff;
-  padding: 0.625rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.leaflet-marker-icon.vv-count-marker {
-  background-color: #ff9600;
-  border: 2px solid #444f55;
-  border-radius: 50%;
-  box-sizing: border-box;
-}
-
-.trafikktelling .leaflet-container {
-  background: #f5f5f5;
-  font-family: var(--font-etica), Arial, Helvetica, sans-serif;
-}
-
-.trafikktelling .leaflet-popup-content-wrapper {
-  border-radius: 0;
-  border-top: 4px solid #ff9600;
-  box-shadow: none;
-}
-
-.trafikktelling .leaflet-popup-content {
-  margin: 10px 14px;
-  color: #444f55;
-  font-family: var(--font-etica), Arial, Helvetica, sans-serif;
-}
-
-.trafikktelling .leaflet-popup-tip {
-  box-shadow: none;
 }
